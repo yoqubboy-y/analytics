@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.env.*
+node_modules
+vendor
+public/build
+public/hot
+storage/logs
+storage/framework/cache
+storage/framework/sessions
+storage/framework/views
+bootstrap/cache
+*.log
+.phpunit.result.cache
+.DS_Store
+Thumbs.db

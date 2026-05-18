@@ -31,7 +31,6 @@ COPY --from=composer-build /app/vendor ./vendor
 # Stub .env so Laravel can boot during build
 RUN cp .env.example .env && php artisan key:generate --no-interaction
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm run build
 
@@ -40,24 +39,11 @@ RUN pnpm run build
 # ──────────────────────────────────────────────
 FROM php:8.3-fpm-alpine
 
-# Install system dependencies and PHP extensions
-RUN apk add --no-cache \
-    nginx \
-    supervisor \
-    curl \
-    zip \
-    unzip \
-    git \
-    oniguruma-dev \
-    libpng-dev \
-    libjpeg-turbo-dev \
-    freetype-dev \
-    libzip-dev \
-    icu-dev \
-    libxml2-dev \
-    postgresql-dev \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install \
+# Use pre-built PHP extensions (avoids compiling from source → no OOM on builder)
+COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
+
+RUN apk add --no-cache nginx supervisor curl zip unzip \
+    && install-php-extensions \
         bcmath \
         ctype \
         dom \
