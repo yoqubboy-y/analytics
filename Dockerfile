@@ -20,8 +20,14 @@ COPY --from=composer-build /app/vendor ./vendor
 
 # Set APP_KEY directly via PHP — no artisan, no framework boot, no OOM risk
 RUN cp .env.example .env \
-    && mkdir -p bootstrap/cache storage/framework/{sessions,views,cache} storage/logs \
+    && mkdir -p bootstrap/cache storage/framework/{sessions,views,cache} storage/logs database \
+    && touch database/database.sqlite \
     && php -r "file_put_contents('.env', str_replace('APP_KEY=', 'APP_KEY=base64:'.base64_encode(random_bytes(32)), file_get_contents('.env')));"
+
+# Generate wayfinder TypeScript route/action files (gitignored, must be created at build time)
+# SESSION/CACHE/QUEUE overrides prevent any accidental DB table lookups during app boot
+RUN SESSION_DRIVER=array CACHE_STORE=array QUEUE_CONNECTION=sync \
+    php artisan wayfinder:generate --with-form
 
 RUN pnpm install --no-frozen-lockfile
 RUN NODE_OPTIONS="--max-old-space-size=512" DOCKER_BUILD=1 pnpm run build
