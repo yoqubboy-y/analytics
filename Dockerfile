@@ -20,7 +20,12 @@ COPY --from=composer-build /app/vendor ./vendor
 
 # Set APP_KEY directly via PHP — no artisan, no framework boot, no OOM risk
 RUN cp .env.example .env \
-    && mkdir -p bootstrap/cache storage/framework/{sessions,views,cache} storage/logs database \
+    && mkdir -p bootstrap/cache \
+               storage/framework/sessions \
+               storage/framework/views \
+               storage/framework/cache \
+               storage/logs \
+               database \
     && touch database/database.sqlite \
     && php -r "file_put_contents('.env', str_replace('APP_KEY=', 'APP_KEY=base64:'.base64_encode(random_bytes(32)), file_get_contents('.env')));"
 
@@ -55,7 +60,9 @@ RUN apk add --no-cache \
 COPY . .
 COPY --from=composer-build /app/vendor ./vendor
 
-RUN mkdir -p storage/framework/{sessions,views,cache} \
+RUN mkdir -p storage/framework/sessions \
+             storage/framework/views \
+             storage/framework/cache \
              storage/logs \
              bootstrap/cache \
     && chown -R www-data:www-data storage bootstrap/cache \
