@@ -34,7 +34,7 @@ RUN cp .env.example .env \
     && php artisan key:generate --no-interaction
 
 RUN pnpm install --no-frozen-lockfile
-RUN pnpm run build
+RUN DOCKER_BUILD=1 pnpm run build
 
 # ──────────────────────────────────────────────
 # Stage 3: Final runtime image
