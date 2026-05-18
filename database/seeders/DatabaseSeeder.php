@@ -19,24 +19,44 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        $user = User::create([
-            'name' => 'Jacob',
-            'email' => 'jacob@zeegotlogistics.com',
-            'email_verified_at' => now(),
-            'password' => Hash::make('9£j1mWR[;J94'),
-        ]);
+        $password = Hash::make('?*FtIG3F38@8');
 
-        $team = Team::create([
-            'name' => 'Zeegot Logistics Street',
-            'external_company_id' => 1,
-            'is_personal' => false,
-        ]);
+        $jacob = User::firstOrCreate(
+            ['email' => 'jacob@zeegotlogistics.com'],
+            [
+                'name' => 'Jacob',
+                'email_verified_at' => now(),
+                'password' => $password,
+            ],
+        );
 
-        $team->members()->attach($user, [
-            'role' => TeamRole::Owner->value,
-        ]);
+        $sage = User::firstOrCreate(
+            ['email' => 'sage@zeegotlogistics.com'],
+            [
+                'name' => 'Sage',
+                'email_verified_at' => now(),
+                'password' => $password,
+            ],
+        );
 
-        $user->switchTeam($team);
+        $team = Team::firstOrCreate(
+            ['external_company_id' => 1],
+            [
+                'name' => 'Zeegot Logistics Street',
+                'is_personal' => false,
+            ],
+        );
+
+        if (! $team->members()->where('user_id', $jacob->id)->exists()) {
+            $team->members()->attach($jacob, ['role' => TeamRole::Owner->value]);
+        }
+
+        if (! $team->members()->where('user_id', $sage->id)->exists()) {
+            $team->members()->attach($sage, ['role' => TeamRole::Admin->value]);
+        }
+
+        $jacob->switchTeam($team);
+        $sage->switchTeam($team);
 
         $this->seedDriverConfigs($team);
     }
