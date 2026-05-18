@@ -37,7 +37,7 @@ RUN DOCKER_BUILD=1 pnpm run build
 # Stage 3: Final runtime image
 # Uses Alpine pre-built php83-* packages — no C compilation
 # ──────────────────────────────────────────────
-FROM alpine:3.23
+FROM alpine:3.21
 
 RUN apk add --no-cache \
     php83 \
@@ -59,7 +59,6 @@ RUN apk add --no-cache \
     php83-pcntl \
     php83-phar \
     php83-session \
-    php83-simplexml \
     php83-sodium \
     php83-tokenizer \
     php83-xml \
