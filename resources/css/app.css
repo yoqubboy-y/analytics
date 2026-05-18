@@ -141,3 +141,65 @@
         @apply bg-background text-foreground;
     }
 }
+
+/* ── Landing page background scene ─────────────────────────────── */
+.scene {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    background: #000;
+    z-index: 0;
+}
+
+.floor {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 30%;
+    background: linear-gradient(to top, rgba(0, 255, 180, 0.04), transparent);
+}
+
+.main-column {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(to bottom, transparent, rgba(0, 255, 180, 0.15), transparent);
+    transform: translateX(-50%);
+}
+
+.light-stream-container {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.light-beam {
+    position: absolute;
+    bottom: 0;
+    border-radius: 9999px;
+    background: linear-gradient(to top, rgba(0, 255, 180, 0.9), rgba(0, 200, 255, 0.4), transparent);
+    animation: beam-rise, beam-fade, beam-drop;
+    animation-fill-mode: forwards;
+    animation-timing-function: ease-out, ease-in-out, ease-in;
+    will-change: transform, opacity;
+}
+
+@keyframes beam-rise {
+    from { transform: translateY(0); height: 0; }
+    to   { transform: translateY(-80vh); height: 80vh; }
+}
+
+@keyframes beam-fade {
+    0%   { opacity: 0; }
+    15%  { opacity: 1; }
+    80%  { opacity: 0.6; }
+    100% { opacity: 0; }
+}
+
+@keyframes beam-drop {
+    from { bottom: 0; }
+    to   { bottom: 100%; }
+}
