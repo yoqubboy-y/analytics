@@ -29,7 +29,9 @@ COPY . .
 COPY --from=composer-build /app/vendor ./vendor
 
 # Stub .env so Laravel can boot during build
-RUN cp .env.example .env && php artisan key:generate --no-interaction
+RUN cp .env.example .env \
+    && mkdir -p bootstrap/cache storage/framework/{sessions,views,cache} storage/logs \
+    && php artisan key:generate --no-interaction
 
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm run build

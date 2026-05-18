@@ -404,8 +404,8 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'P&L Report');
 
-        const today = new Date().toISOString().slice(0, 10);
-        XLSX.writeFile(wb, `pnl-report-${today}.xlsx`);
+        const ts = new Date().toISOString().slice(0, 19).replace('T', '_').replaceAll(':', '-');
+        XLSX.writeFile(wb, `pnl-report-${ts}.xlsx`);
     }, [rows, expenses, totalRow]);
 
     return (
