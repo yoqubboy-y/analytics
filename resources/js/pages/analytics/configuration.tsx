@@ -43,6 +43,8 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { ReceiptText } from 'lucide-react';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 
 type ContractType = { value: string; label: string };
 type CalculationType = { value: string; label: string };
@@ -149,6 +151,7 @@ export default function Configuration({
 
     // --- Team Expense Editing ---
     const [newExpense, setNewExpense] = useState({ ...emptyExpense });
+    const [addExpenseOpen, setAddExpenseOpen] = useState(false);
     const [editingExpense, setEditingExpense] = useState<
         (TeamExpense & { rate: string }) | null
     >(null);
@@ -165,7 +168,12 @@ export default function Configuration({
                         ? newExpense.applies_to
                         : null,
             },
-            { onSuccess: () => setNewExpense({ ...emptyExpense }) },
+            {
+                onSuccess: () => {
+                    setNewExpense({ ...emptyExpense });
+                    setAddExpenseOpen(false);
+                },
+            },
         );
     }
 
@@ -524,7 +532,157 @@ export default function Configuration({
                         value="expenses"
                         className="mt-4 flex flex-col gap-4"
                     >
-                        {expenses.length > 0 && (
+                        <div className="flex justify-end">
+                            <Dialog open={addExpenseOpen} onOpenChange={setAddExpenseOpen}>
+                                <DialogTrigger asChild>
+                                    <Button size="sm">Add Expense</Button>
+                                </DialogTrigger>
+                                <DialogContent>
+                                    <DialogHeader>
+                                        <DialogTitle>Add Expense</DialogTitle>
+                                    </DialogHeader>
+                                    <form id="add-expense-form" onSubmit={submitNewExpense}>
+                                        <div className="grid gap-4 sm:grid-cols-2">
+                                            <div className="flex flex-col gap-1">
+                                                <Label htmlFor="exp-name">Name</Label>
+                                                <Input
+                                                    id="exp-name"
+                                                    required
+                                                    value={newExpense.name}
+                                                    onChange={(e) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            name: e.target.value,
+                                                        })
+                                                    }
+                                                    placeholder="e.g. Fuel Surcharge"
+                                                />
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                                <Label htmlFor="exp-type">
+                                                    Calculation Type
+                                                </Label>
+                                                <Select
+                                                    value={newExpense.calculation_type}
+                                                    onValueChange={(v) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            calculation_type: v,
+                                                        })
+                                                    }
+                                                >
+                                                    <SelectTrigger id="exp-type">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {calculationTypes.map((ct) => (
+                                                            <SelectItem
+                                                                key={ct.value}
+                                                                value={ct.value}
+                                                            >
+                                                                {ct.label}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                                <Label htmlFor="exp-rate">Rate</Label>
+                                                <Input
+                                                    id="exp-rate"
+                                                    type="number"
+                                                    step={
+                                                        newExpense.calculation_type ===
+                                                        'percentage_of_gross'
+                                                            ? '0.001'
+                                                            : '0.01'
+                                                    }
+                                                    required
+                                                    value={newExpense.rate}
+                                                    onChange={(e) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            rate: e.target.value,
+                                                        })
+                                                    }
+                                                    placeholder={
+                                                        newExpense.calculation_type ===
+                                                        'percentage_of_gross'
+                                                            ? '0.026'
+                                                            : '0.00'
+                                                    }
+                                                />
+                                                {newExpense.calculation_type ===
+                                                    'percentage_of_gross' && (
+                                                    <span className="text-xs text-muted-foreground">
+                                                        Enter as decimal — e.g.{' '}
+                                                        <strong>0.026</strong> = 2.6%
+                                                    </span>
+                                                )}
+                                                {newExpense.calculation_type ===
+                                                    'per_mile' && (
+                                                    <span className="text-xs text-muted-foreground">
+                                                        e.g. <strong>0.20</strong> =
+                                                        20¢/mile
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="flex flex-col gap-1 sm:col-span-2">
+                                                <Label htmlFor="exp-desc">
+                                                    Description (optional)
+                                                </Label>
+                                                <Input
+                                                    id="exp-desc"
+                                                    value={newExpense.description}
+                                                    onChange={(e) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            description: e.target.value,
+                                                        })
+                                                    }
+                                                />
+                                            </div>
+                                            <div className="flex flex-col gap-1 sm:col-span-2">
+                                                <Label>
+                                                    Applies To{' '}
+                                                    <span className="font-normal text-muted-foreground">
+                                                        (leave blank for all)
+                                                    </span>
+                                                </Label>
+                                                <ToggleGroup
+                                                    type="multiple"
+                                                    variant="outline"
+                                                    className="justify-start"
+                                                    value={newExpense.applies_to}
+                                                    onValueChange={(v) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            applies_to: v,
+                                                        })
+                                                    }
+                                                >
+                                                    {contractTypes.map((ct) => (
+                                                        <ToggleGroupItem
+                                                            key={ct.value}
+                                                            value={ct.value}
+                                                        >
+                                                            {ct.label}
+                                                        </ToggleGroupItem>
+                                                    ))}
+                                                </ToggleGroup>
+                                            </div>
+                                        </div>
+                                    </form>
+                                    <DialogFooter>
+                                        <Button type="submit" form="add-expense-form">
+                                            Add Expense
+                                        </Button>
+                                    </DialogFooter>
+                                </DialogContent>
+                            </Dialog>
+                        </div>
+
+                        {expenses.length > 0 ? (
                             <div className="overflow-x-auto rounded-lg border">
                                 <Table>
                                     <TableHeader>
@@ -806,148 +964,19 @@ export default function Configuration({
                                     </TableBody>
                                 </Table>
                             </div>
+                        ) : (
+                            <Empty>
+                                <EmptyHeader>
+                                    <EmptyMedia variant="icon">
+                                        <ReceiptText />
+                                    </EmptyMedia>
+                                    <EmptyTitle>No team expenses</EmptyTitle>
+                                    <EmptyDescription>
+                                        Add your first expense to start tracking team costs.
+                                    </EmptyDescription>
+                                </EmptyHeader>
+                            </Empty>
                         )}
-
-                        {/* Add New Expense Form */}
-                        <form
-                            onSubmit={submitNewExpense}
-                            className="rounded-lg border p-4"
-                        >
-                            <h3 className="mb-3 font-medium">Add Expense</h3>
-                            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                                <div className="flex flex-col gap-1">
-                                    <Label htmlFor="exp-name">Name</Label>
-                                    <Input
-                                        id="exp-name"
-                                        required
-                                        value={newExpense.name}
-                                        onChange={(e) =>
-                                            setNewExpense({
-                                                ...newExpense,
-                                                name: e.target.value,
-                                            })
-                                        }
-                                        placeholder="e.g. Fuel Surcharge"
-                                    />
-                                </div>
-                                <div className="flex flex-col gap-1">
-                                    <Label htmlFor="exp-type">
-                                        Calculation Type
-                                    </Label>
-                                    <Select
-                                        value={newExpense.calculation_type}
-                                        onValueChange={(v) =>
-                                            setNewExpense({
-                                                ...newExpense,
-                                                calculation_type: v,
-                                            })
-                                        }
-                                    >
-                                        <SelectTrigger id="exp-type">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {calculationTypes.map((ct) => (
-                                                <SelectItem
-                                                    key={ct.value}
-                                                    value={ct.value}
-                                                >
-                                                    {ct.label}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div className="flex flex-col gap-1">
-                                    <Label htmlFor="exp-rate">Rate</Label>
-                                    <Input
-                                        id="exp-rate"
-                                        type="number"
-                                        step={
-                                            newExpense.calculation_type ===
-                                            'percentage_of_gross'
-                                                ? '0.001'
-                                                : '0.01'
-                                        }
-                                        required
-                                        value={newExpense.rate}
-                                        onChange={(e) =>
-                                            setNewExpense({
-                                                ...newExpense,
-                                                rate: e.target.value,
-                                            })
-                                        }
-                                        placeholder={
-                                            newExpense.calculation_type ===
-                                            'percentage_of_gross'
-                                                ? '0.026'
-                                                : '0.00'
-                                        }
-                                    />
-                                    {newExpense.calculation_type ===
-                                        'percentage_of_gross' && (
-                                        <span className="text-xs text-muted-foreground">
-                                            Enter as decimal — e.g.{' '}
-                                            <strong>0.026</strong> = 2.6%
-                                        </span>
-                                    )}
-                                    {newExpense.calculation_type ===
-                                        'per_mile' && (
-                                        <span className="text-xs text-muted-foreground">
-                                            e.g. <strong>0.20</strong> =
-                                            20¢/mile
-                                        </span>
-                                    )}
-                                </div>
-                                <div className="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
-                                    <Label htmlFor="exp-desc">
-                                        Description (optional)
-                                    </Label>
-                                    <Input
-                                        id="exp-desc"
-                                        value={newExpense.description}
-                                        onChange={(e) =>
-                                            setNewExpense({
-                                                ...newExpense,
-                                                description: e.target.value,
-                                            })
-                                        }
-                                    />
-                                </div>
-                                <div className="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
-                                    <Label>
-                                        Applies To{' '}
-                                        <span className="font-normal text-muted-foreground">
-                                            (leave blank for all)
-                                        </span>
-                                    </Label>
-                                    <ToggleGroup
-                                        type="multiple"
-                                        variant="outline"
-                                        className="justify-start"
-                                        value={newExpense.applies_to}
-                                        onValueChange={(v) =>
-                                            setNewExpense({
-                                                ...newExpense,
-                                                applies_to: v,
-                                            })
-                                        }
-                                    >
-                                        {contractTypes.map((ct) => (
-                                            <ToggleGroupItem
-                                                key={ct.value}
-                                                value={ct.value}
-                                            >
-                                                {ct.label}
-                                            </ToggleGroupItem>
-                                        ))}
-                                    </ToggleGroup>
-                                </div>
-                            </div>
-                            <div className="mt-4">
-                                <Button type="submit">Add Expense</Button>
-                            </div>
-                        </form>
                     </TabsContent>
                 </Tabs>
             </div>
@@ -965,3 +994,4 @@ Configuration.layout = (props: { currentTeam?: { slug: string } | null }) => ({
         },
     ],
 });
+
