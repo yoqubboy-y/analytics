@@ -11,8 +11,14 @@ php artisan migrate --force
 # Seed initial data (idempotent — safe to run on every deploy)
 php artisan db:seed --force
 
-# Clear any stale cache
-php artisan optimize:clear
+# Clear stale bootstrap/file caches — these never need a Redis connection
+php artisan config:clear
+php artisan route:clear
+php artisan view:clear
+php artisan event:clear
+# cache:clear contacts the configured cache driver (Redis); non-fatal so a
+# missing/unconfigured Redis doesn't abort the startup sequence
+php artisan cache:clear || true
 
 # Cache config, routes, events and views for performance
 php artisan config:cache

@@ -92,12 +92,10 @@ class DatabaseSeeder extends Seeder
                 ? (float) rtrim($tariffRaw, '%') / 100
                 : (float) $tariffRaw;
 
-            DriverConfig::create([
-                'team_id' => $team->id,
-                'external_driver_id' => $driverId,
-                'contract_type' => $contractType,
-                'tariff_rate' => $tariffRate,
-            ]);
+            DriverConfig::updateOrCreate(
+                ['team_id' => $team->id, 'external_driver_id' => $driverId],
+                ['contract_type' => $contractType, 'tariff_rate' => $tariffRate],
+            );
         }
 
         fclose($handle);
