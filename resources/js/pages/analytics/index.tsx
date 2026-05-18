@@ -5,6 +5,8 @@ import {
     type Row,
     PnlTable,
 } from '@/components/analytics/pnl-table';
+import { KeyMetrics, type KeyMetricsData } from '@/components/analytics/key-metrics';
+import { DispatcherChart } from '@/components/analytics/dispatcher-chart';
 import { WeekRangePicker } from '@/components/week-range-picker';
 
 type Props = {
@@ -12,6 +14,7 @@ type Props = {
     expenses: Expense[];
     startDate: string;
     endDate: string;
+    keyMetrics: KeyMetricsData;
 };
 
 export default function AnalyticsDashboard({
@@ -19,6 +22,7 @@ export default function AnalyticsDashboard({
     expenses,
     startDate,
     endDate,
+    keyMetrics,
 }: Props) {
     const page = usePage();
     const slug = page.props.currentTeam?.slug ?? '';
@@ -35,8 +39,7 @@ export default function AnalyticsDashboard({
         <>
             <Head title="Analytics" />
             <div className="flex flex-col gap-4 p-4">
-                <div className="flex items-center justify-between">
-                    <h1 className="text-xl font-semibold">P&amp;L Report</h1>
+                <div className="flex justify-end">
                     <WeekRangePicker
                         startDate={startDate}
                         endDate={endDate}
@@ -44,7 +47,14 @@ export default function AnalyticsDashboard({
                     />
                 </div>
 
-                <PnlTable rows={rows} expenses={expenses} />
+                {/* Summary cards */}
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                    <KeyMetrics rows={rows} metrics={keyMetrics} />
+                    <DispatcherChart rows={rows} />
+                    <div className="rounded-xl border bg-card shadow-sm" />
+                </div>
+
+                <PnlTable rows={rows} expenses={expenses} title="P&L Report" />
             </div>
         </>
     );

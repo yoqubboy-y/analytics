@@ -53,6 +53,19 @@ class ConfigurationController extends Controller
         ]);
     }
 
+    public function storeDriverConfig(Request $request, Team $currentTeam): RedirectResponse
+    {
+        $data = $request->validate([
+            'external_driver_id' => ['required', 'integer', 'min:1', Rule::unique('driver_configs')->where('team_id', $currentTeam->id)],
+            'contract_type' => ['required', Rule::enum(DriverContractType::class)],
+            'tariff_rate' => ['required', 'numeric', 'min:0', 'max:9999'],
+        ]);
+
+        $currentTeam->driverConfigs()->create($data);
+
+        return back();
+    }
+
     public function updateDriverConfig(Request $request, Team $currentTeam, DriverConfig $driverConfig): RedirectResponse
     {
         $data = $request->validate([

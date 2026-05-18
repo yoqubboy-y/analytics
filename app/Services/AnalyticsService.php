@@ -231,8 +231,7 @@ class AnalyticsService
      * @return array<string, mixed>
      */
     private function computeTotals(Collection $rows, Collection $expenses): array
-    {
-        $configured = $rows->where('missing_config', false);
+    {        $configured = $rows->where('missing_config', false);
         $totalMiles = $configured->sum('total_miles');
         $totalGross = $configured->sum('total_gross');
 
@@ -262,6 +261,166 @@ class AnalyticsService
             'profit_loss' => $configured->sum('profit_loss'),
             'missing_config' => false,
             'is_total' => true,
+        ];
+    }
+
+    /**
+     * Compute key metrics for the analytics dashboard.
+     *
+     * Pulls event-day data from gross_boards for the period and computes
+     * compound utilization rate (non-LOAD/DRAFT event days / total event days)
+     * and per-event-type breakdown.
+     *
+     * @return array{
+     *     drivers: array{total: int, active: int, rolling: int, ready: int, inactive: int},
+     *     compound_utilization_rate: float,
+     *     event_breakdown: array<int, array{type: string, days: float, percentage: float}>,
+     * }
+     */
+    public function weeklyKeyMetrics(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): array
+    {
+        $companyId = $team->external_company_id;
+        $start = $startDate->toDateString();
+        $endPlusOne = $endDate->copy()->addDay()->toDateString();
+
+        $end = $endDate->toDateString();
+
+        // Per-event-type distinct-day counts, restricted to the company's currently
+        // employment-active drivers (matches the same pool used for driver counts).
+        $events = DB::connection('analytics')->select(
+            <<<'SQL'
+                WITH company_drivers AS (
+                    SELECT d.id AS driver_id
+                    FROM drivers d
+                    JOIN users u ON u.id = d.user_id AND u.is_deleted = FALSE
+                    JOIN company_users cu ON cu.user_id = u.id
+                        AND cu.company_id = :company_id
+                        AND cu.is_deleted = FALSE
+                    WHERE d.is_deleted = FALSE
+                ),
+                boards AS (
+                    SELECT
+                        gb.primary_driver_id,
+                        CASE
+                            WHEN gb.object_type::text IN ('LOAD', 'DRAFT') THEN gb.object_type::text
+                            ELSE UPPER(COALESCE(NULLIF(TRIM(gb.title), ''), 'OTHER'))
+                        END AS type,
+                        gb.start_date,
+                        gb.end_date
+                    FROM gross_boards gb
+                    JOIN company_drivers cd ON cd.driver_id = gb.primary_driver_id
+                    WHERE gb.is_deleted = FALSE
+                      AND gb.company_id = :company_id
+                      AND (
+                          (
+                              gb.start_date >= :start_date::timestamp
+                              AND gb.start_date <= :end_date::timestamp
+                              AND (gb.end_date IS NULL OR gb.end_date <= :end_date_plus_one::timestamp)
+                          )
+                          OR (
+                              gb.start_date >= :start_date_minus_seven::timestamp
+                              AND gb.start_date < :start_date::timestamp
+                              AND gb.end_date > :start_date::timestamp
+                          )
+                      )
+                ),
+                expanded AS (
+                    SELECT
+                        b.primary_driver_id,
+                        b.type,
+                        day::date AS d
+                    FROM boards b
+                    CROSS JOIN LATERAL generate_series(
+                        GREATEST(b.start_date, :start_date::timestamp),
+                        LEAST(COALESCE(b.end_date, :end_date::timestamp), :end_date::timestamp),
+                        '1 day'::interval
+                    ) AS day
+                )
+                SELECT type, COUNT(*) AS total_days
+                FROM (
+                    SELECT DISTINCT primary_driver_id, type, d FROM expanded
+                ) x
+                GROUP BY type
+            SQL,
+            [
+                'company_id' => $companyId,
+                'start_date' => $start,
+                'end_date' => $end,
+                'end_date_plus_one' => $endPlusOne,
+                'start_date_minus_seven' => $startDate->copy()->subDays(7)->toDateString(),
+            ]
+        );
+
+        $byType = collect($events)->mapWithKeys(fn (object $r) => [$r->type => (float) $r->total_days]);
+
+        // Driver counts via the analytics DB. Uses the same filters as the PnL
+        // table (LOAD/DRAFT boards overlapping the window) so totals match.
+        $driverCounts = DB::connection('analytics')->select(
+            <<<'SQL'
+                WITH rolling_drivers AS (
+                    SELECT DISTINCT gb.primary_driver_id AS driver_id
+                    FROM gross_boards gb
+                    JOIN drivers d ON d.id = gb.primary_driver_id AND d.is_deleted = FALSE
+                    JOIN users u ON u.id = d.user_id AND u.is_deleted = FALSE
+                    JOIN company_users cu ON cu.user_id = u.id
+                        AND cu.company_id = :company_id
+                        AND cu.is_deleted = FALSE
+                    WHERE gb.is_deleted = FALSE
+                      AND gb.company_id = :company_id
+                      AND gb.object_type::text IN ('LOAD', 'DRAFT')
+                      AND (
+                          (
+                              gb.start_date >= :start_date::timestamp
+                              AND gb.start_date <= :end_date::timestamp
+                              AND (gb.end_date IS NULL OR gb.end_date <= :end_date_plus_one::timestamp)
+                          )
+                          OR (
+                              gb.start_date >= :start_date_minus_seven::timestamp
+                              AND gb.start_date < :start_date::timestamp
+                              AND gb.end_date > :start_date::timestamp
+                          )
+                      )
+                )
+                SELECT (SELECT COUNT(*) FROM rolling_drivers) AS total
+            SQL,
+            [
+                'company_id' => $companyId,
+                'start_date' => $start,
+                'end_date' => $end,
+                'end_date_plus_one' => $endPlusOne,
+                'start_date_minus_seven' => $startDate->copy()->subDays(7)->toDateString(),
+            ]
+        );
+
+        $dc = $driverCounts[0] ?? null;
+        $total = (int) ($dc->total ?? 0);
+
+        // Total available driver-days in the window = total drivers * window length.
+        $windowDays = (int) $startDate->copy()->startOfDay()->diffInDays($endDate->copy()->startOfDay()) + 1;
+        $capacityDays = $total * $windowDays;
+
+        $productiveDays = ($byType['LOAD'] ?? 0.0) + ($byType['DRAFT'] ?? 0.0);
+        $utilizationRate = $capacityDays > 0
+            ? min(100.0, ($productiveDays / $capacityDays) * 100.0)
+            : 0.0;
+
+        $breakdown = $byType
+            ->except(['LOAD', 'DRAFT'])
+            ->map(fn (float $days, string $type) => [
+                'type' => $type,
+                'days' => round($days, 2),
+                'percentage' => $capacityDays > 0 ? round(($days / $capacityDays) * 100.0, 2) : 0.0,
+            ])
+            ->sortByDesc('days')
+            ->values()
+            ->all();
+
+        return [
+            'drivers' => [
+                'total' => $total,
+            ],
+            'compound_utilization_rate' => round($utilizationRate, 2),
+            'event_breakdown' => $breakdown,
         ];
     }
 }

@@ -20,9 +20,11 @@ class AnalyticsController extends Controller
         $endDate = $request->date('end_date', 'Y-m-d') ?? Carbon::now()->endOfWeek();
 
         $rows = $this->analytics->weeklyReport($currentTeam, $startDate, $endDate);
+        $keyMetrics = $this->analytics->weeklyKeyMetrics($currentTeam, $startDate, $endDate);
 
         return Inertia::render('analytics/index', [
             'rows' => $rows->values(),
+            'keyMetrics' => $keyMetrics,
             'expenses' => $currentTeam->expenses->map(fn ($e) => [
                 'id' => $e->id,
                 'name' => $e->name,

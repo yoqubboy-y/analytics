@@ -3,6 +3,7 @@ import { useState } from 'react';
 import {
     destroyExpense,
     index as configurationIndex,
+    storeDriverConfig,
     storeExpense,
     updateDriverConfig,
     updateExpense,
@@ -32,6 +33,14 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import {
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
@@ -90,6 +99,28 @@ export default function Configuration({
         driverPage * driverPageSize,
     );
 
+    const emptyDriverConfig = { external_driver_id: '', contract_type: contractTypes[0]?.value ?? '', tariff_rate: '' };
+    const [newDriverConfig, setNewDriverConfig] = useState({ ...emptyDriverConfig });
+    const [addDriverOpen, setAddDriverOpen] = useState(false);
+
+    function submitNewDriverConfig(e: React.FormEvent) {
+        e.preventDefault();
+        router[storeDriverConfig(slug).method](
+            storeDriverConfig.url(slug),
+            {
+                external_driver_id: parseInt(newDriverConfig.external_driver_id as string),
+                contract_type: newDriverConfig.contract_type,
+                tariff_rate: parseFloat(newDriverConfig.tariff_rate as string),
+            },
+            {
+                onSuccess: () => {
+                    setNewDriverConfig({ ...emptyDriverConfig });
+                    setAddDriverOpen(false);
+                },
+            },
+        );
+    }
+
     const [editingDriver, setEditingDriver] = useState<{
         id: number;
         contract_type: string;
@@ -106,8 +137,8 @@ export default function Configuration({
 
     function saveDriver() {
         if (!editingDriver) return;
-        router[updateDriverConfig(slug, editingDriver.id).method](
-            updateDriverConfig.url(slug, editingDriver.id),
+        router[updateDriverConfig([slug, editingDriver.id]).method](
+            updateDriverConfig.url([slug, editingDriver.id]),
             {
                 contract_type: editingDriver.contract_type,
                 tariff_rate: parseFloat(editingDriver.tariff_rate),
@@ -140,8 +171,8 @@ export default function Configuration({
 
     function saveExpense() {
         if (!editingExpense) return;
-        router[updateExpense(slug, editingExpense.id).method](
-            updateExpense.url(slug, editingExpense.id),
+        router[updateExpense([slug, editingExpense.id]).method](
+            updateExpense.url([slug, editingExpense.id]),
             {
                 name: editingExpense.name,
                 description: editingExpense.description,
@@ -160,7 +191,7 @@ export default function Configuration({
 
     function deleteExpense(id: number) {
         if (!confirm('Delete this expense?')) return;
-        router[destroyExpense(slug, id).method](destroyExpense.url(slug, id));
+        router[destroyExpense([slug, id]).method](destroyExpense.url([slug, id]));
     }
 
     return (
@@ -185,6 +216,91 @@ export default function Configuration({
 
                     {/* Driver Contracts Tab */}
                     <TabsContent value="drivers" className="mt-4">
+                        <div className="mb-4 flex justify-end">
+                            <Dialog open={addDriverOpen} onOpenChange={setAddDriverOpen}>
+                                <DialogTrigger asChild>
+                                    <Button size="sm">Add Driver Config</Button>
+                                </DialogTrigger>
+                                <DialogContent>
+                                    <DialogHeader>
+                                        <DialogTitle>Add Driver Config</DialogTitle>
+                                    </DialogHeader>
+                                    <form id="add-driver-config-form" onSubmit={submitNewDriverConfig}>
+                                        <div className="flex flex-col gap-4">
+                                            <div className="flex flex-col gap-1">
+                                                <Label htmlFor="dc-driver-id">Driver ID</Label>
+                                                <Input
+                                                    id="dc-driver-id"
+                                                    type="number"
+                                                    min="1"
+                                                    required
+                                                    value={newDriverConfig.external_driver_id}
+                                                    onChange={(e) =>
+                                                        setNewDriverConfig({
+                                                            ...newDriverConfig,
+                                                            external_driver_id: e.target.value,
+                                                        })
+                                                    }
+                                                    placeholder="e.g. 42"
+                                                />
+                                            </div>
+                                            <div className="flex gap-4">
+                                                <div className="flex flex-1 flex-col gap-1">
+                                                    <Label htmlFor="dc-contract-type">Contract Type</Label>
+                                                    <Select
+                                                        value={newDriverConfig.contract_type}
+                                                        onValueChange={(v) =>
+                                                            setNewDriverConfig({
+                                                                ...newDriverConfig,
+                                                                contract_type: v,
+                                                            })
+                                                        }
+                                                    >
+                                                        <SelectTrigger id="dc-contract-type">
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {contractTypes.map((ct) => (
+                                                                <SelectItem key={ct.value} value={ct.value}>
+                                                                    {ct.label}
+                                                                </SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                                <div className="flex w-32 flex-col gap-1">
+                                                    <Label htmlFor="dc-rate">Rate</Label>
+                                                    <Input
+                                                        id="dc-rate"
+                                                        type="number"
+                                                        step={newDriverConfig.contract_type === 'company_cpm' ? '0.01' : '0.001'}
+                                                        min="0"
+                                                        required
+                                                        value={newDriverConfig.tariff_rate}
+                                                        onChange={(e) =>
+                                                            setNewDriverConfig({
+                                                                ...newDriverConfig,
+                                                                tariff_rate: e.target.value,
+                                                            })
+                                                        }
+                                                        placeholder={newDriverConfig.contract_type === 'company_cpm' ? '0.65' : '0.30'}
+                                                    />
+                                                    {newDriverConfig.contract_type !== 'company_cpm' && (
+                                                        <span className="text-xs text-muted-foreground">
+                                                            e.g. <strong>0.30</strong> = 30%
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </form>
+                                    <DialogFooter>
+                                        <Button type="submit" form="add-driver-config-form">Add Config</Button>
+                                    </DialogFooter>
+                                </DialogContent>
+                            </Dialog>
+                        </div>
+
                         <div className="overflow-x-auto rounded-lg border">
                             <Table>
                                 <TableHeader>

@@ -1,7 +1,40 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type React from 'react';
-import { ArrowDownIcon, ArrowUpIcon, ChevronsUpDownIcon } from 'lucide-react';
-import { Input } from '@/components/ui/input';
+import {
+    type ColumnDef,
+    type ColumnSizingState,
+    type SortingState,
+    flexRender,
+    getCoreRowModel,
+    getSortedRowModel,
+    useReactTable,
+} from '@tanstack/react-table';
+import {
+    ArrowDownIcon,
+    ArrowUpIcon,
+    ChevronLeftIcon,
+    ChevronRightIcon,
+    ChevronsUpDownIcon,
+    DownloadIcon,
+    EyeIcon,
+    EyeOffIcon,
+    FilterIcon,
+    SearchIcon,
+    Settings2Icon,
+    XIcon,
+} from 'lucide-react';
+import {
+    Pagination,
+    PaginationContent,
+    PaginationItem,
+    PaginationNext,
+    PaginationPrevious,
+} from '@/components/ui/pagination';
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from '@/components/ui/popover';
 import {
     Select,
     SelectContent,
@@ -9,6 +42,8 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
+import MultipleSelector, { type Option } from '@/components/ui/multiselect';
+import * as XLSX from 'xlsx';
 import {
     Table,
     TableBody,
@@ -17,13 +52,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
-import {
-    Pagination,
-    PaginationContent,
-    PaginationItem,
-    PaginationNext,
-    PaginationPrevious,
-} from '@/components/ui/pagination';
+import { cn } from '@/lib/utils';
 
 export type Row = {
     driver_id: number | null;
@@ -58,434 +87,753 @@ const fmtInt = (n: number) => n.toLocaleString('en-US');
 
 const PAGE_SIZE_OPTIONS = [10, 15, 25, 50, 100];
 
-function SortIcon({ sorted }: { sorted: false | 'asc' | 'desc' }) {
-    if (sorted === 'asc')
-        return <ArrowUpIcon className="ml-1 inline h-3 w-3" />;
-    if (sorted === 'desc')
-        return <ArrowDownIcon className="ml-1 inline h-3 w-3" />;
-    return <ChevronsUpDownIcon className="ml-1 inline h-3 w-3 opacity-40" />;
-}
+// Simple column header with click-to-sort and drag-to-resize (DOM-only during drag)
+function ColHead({
+    id,
+    size,
+    isSorted,
+    canSort,
+    onSort,
+    onResize,
+    children,
+}: {
+    id: string;
+    size: number;
+    isSorted: false | 'asc' | 'desc';
+    canSort: boolean;
+    onSort: () => void;
+    onResize: (id: string, size: number) => void;
+    children: React.ReactNode;
+}) {
+    const thRef = useRef<HTMLTableCellElement | null>(null);
+    const startX = useRef(0);
+    const startSize = useRef(0);
+    const currentSize = useRef(size);
+    const dragging = useRef(false);
 
-type SortKey = keyof Row | `expense_${string}`;
-type SortDir = 'asc' | 'desc';
+    const onResizeMouseDown = useCallback(
+        (e: React.MouseEvent) => {
+            e.stopPropagation();
+            e.preventDefault();
+            dragging.current = true;
+            startX.current = e.clientX;
+            startSize.current = thRef.current ? thRef.current.offsetWidth : size;
+            currentSize.current = startSize.current;
+
+            function onMove(ev: MouseEvent) {
+                if (!dragging.current) return;
+                const next = Math.max(60, startSize.current + ev.clientX - startX.current);
+                currentSize.current = next;
+                if (thRef.current) {
+                    thRef.current.style.width = `${next}px`;
+                    thRef.current.style.minWidth = `${next}px`;
+                }
+            }
+            function onUp() {
+                dragging.current = false;
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                onResize(id, currentSize.current);
+            }
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        },
+        [id, size, onResize],
+    );
+
+    return (
+        <TableHead
+            ref={thRef}
+            style={{ width: size, minWidth: size, position: 'relative' }}
+            className="group select-none px-2 py-2 text-xs whitespace-nowrap"
+        >
+            <div className="flex items-center gap-0.5">
+                <span
+                    className={cn('flex items-center gap-0.5 truncate', canSort && 'cursor-pointer')}
+                    onClick={canSort ? onSort : undefined}
+                >
+                    {children}
+                    {canSort && (
+                        isSorted === 'asc' ? (
+                            <ArrowUpIcon className="h-3 w-3 shrink-0" />
+                        ) : isSorted === 'desc' ? (
+                            <ArrowDownIcon className="h-3 w-3 shrink-0" />
+                        ) : (
+                            <ChevronsUpDownIcon className="h-3 w-3 shrink-0 opacity-30" />
+                        )
+                    )}
+                </span>
+            </div>
+            <div
+                onMouseDown={onResizeMouseDown}
+                className="absolute top-0 right-0 z-10 h-full w-1 cursor-col-resize opacity-0 hover:bg-border group-hover:opacity-100"
+            />
+        </TableHead>
+    );
+}
 
 interface PnlTableProps {
     rows: Row[];
     expenses: Expense[];
+    title?: string;
 }
 
-export function PnlTable({ rows, expenses }: PnlTableProps) {
-    const [sortKey, setSortKey] = useState<SortKey | null>(null);
-    const [sortDir, setSortDir] = useState<SortDir>('asc');
+export function PnlTable({ rows, expenses, title }: PnlTableProps) {
     const [driverFilter, setDriverFilter] = useState('');
-    const [dispatcherFilter, setDispatcherFilter] = useState('all');
-    const [typeFilter, setTypeFilter] = useState('all');
-    const [truckFilter, setTruckFilter] = useState('all');
+    const [dispatcherFilter, setDispatcherFilter] = useState<Option[]>([]);
+    const [typeFilter, setTypeFilter] = useState<Option[]>([]);
+    const [truckFilter, setTruckFilter] = useState<Option[]>([]);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(15);
+    const [sorting, setSorting] = useState<SortingState>([]);
+    const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
+    const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>({});
 
     const dispatchers = useMemo(
-        () => [
-            'all',
-            ...Array.from(
-                new Set(
-                    rows
-                        .filter((r) => !r.is_total && r.dispatcher)
-                        .map((r) => r.dispatcher),
-                ),
-            ).sort(),
-        ],
+        () => [...new Set(rows.filter((r) => !r.is_total && r.dispatcher).map((r) => r.dispatcher))].sort(),
         [rows],
     );
-
     const contractTypes = useMemo(
-        () => [
-            'all',
-            ...Array.from(
-                new Set(
-                    rows
-                        .filter((r) => !r.is_total && r.type)
-                        .map((r) => r.type as string),
-                ),
-            ).sort(),
-        ],
+        () => [...new Set(rows.filter((r) => !r.is_total && r.type).map((r) => r.type as string))].sort(),
         [rows],
     );
-
     const trucks = useMemo(
-        () => [
-            'all',
-            ...Array.from(
-                new Set(
-                    rows
-                        .filter((r) => !r.is_total && r.truck_number)
-                        .map((r) => r.truck_number as string),
-                ),
-            ).sort(),
-        ],
+        () => [...new Set(rows.filter((r) => !r.is_total && r.truck_number).map((r) => r.truck_number as string))].sort(),
         [rows],
     );
 
-    function toggleSort(key: SortKey) {
-        if (sortKey === key) {
-            setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-        } else {
-            setSortKey(key);
-            setSortDir('asc');
-        }
-    }
-
-    function getVal(row: Row, key: SortKey): string | number | null {
-        if (key.startsWith('expense_')) {
-            const name = key.slice('expense_'.length);
-            return row.expenses[name] ?? null;
-        }
-        return row[key as keyof Row] as string | number | null;
-    }
-
-    const totalRow = useMemo(
-        () => rows.find((r) => r.is_total) ?? null,
-        [rows],
-    );
+    const totalRow = useMemo(() => rows.find((r) => r.is_total) ?? null, [rows]);
 
     const displayRows = useMemo(() => {
         let data = rows.filter((r) => !r.is_total);
-
         if (driverFilter) {
             const q = driverFilter.toLowerCase();
             data = data.filter((r) => r.driver_name.toLowerCase().includes(q));
         }
-        if (dispatcherFilter !== 'all') {
-            data = data.filter((r) => r.dispatcher === dispatcherFilter);
-        }
-        if (typeFilter !== 'all') {
-            data = data.filter((r) => r.type === typeFilter);
-        }
-        if (truckFilter !== 'all') {
-            data = data.filter((r) => r.truck_number === truckFilter);
-        }
-
-        if (sortKey) {
-            data = [...data].sort((a, b) => {
-                const av = getVal(a, sortKey);
-                const bv = getVal(b, sortKey);
-                if (av == null && bv == null) return 0;
-                if (av == null) return 1;
-                if (bv == null) return -1;
-                const cmp =
-                    typeof av === 'string'
-                        ? av.localeCompare(bv as string)
-                        : (av as number) - (bv as number);
-                return sortDir === 'asc' ? cmp : -cmp;
-            });
-        }
-
+        if (dispatcherFilter.length > 0) data = data.filter((r) => dispatcherFilter.some((o) => o.value === r.dispatcher));
+        if (typeFilter.length > 0) data = data.filter((r) => typeFilter.some((o) => o.value === (r.type ?? '')));
+        if (truckFilter.length > 0) data = data.filter((r) => truckFilter.some((o) => o.value === (r.truck_number ?? '')));
         return data;
-    }, [
-        rows,
-        driverFilter,
-        dispatcherFilter,
-        typeFilter,
-        truckFilter,
-        sortKey,
-        sortDir,
-    ]);
-
-    useEffect(() => {
-        setPage(1);
-    }, [driverFilter, dispatcherFilter, typeFilter, truckFilter, sortKey]);
-
-    const SortIcon = ({ col }: { col: SortKey }) => {
-        if (sortKey !== col)
-            return (
-                <ChevronsUpDownIcon className="ml-1 inline h-3 w-3 opacity-40" />
-            );
-        return sortDir === 'asc' ? (
-            <ArrowUpIcon className="ml-1 inline h-3 w-3" />
-        ) : (
-            <ArrowDownIcon className="ml-1 inline h-3 w-3" />
-        );
-    };
-
-    const Th = ({
-        col,
-        children,
-    }: {
-        col: SortKey;
-        children: React.ReactNode;
-    }) => (
-        <TableHead
-            className="cursor-pointer px-3 py-2 text-xs whitespace-nowrap select-none"
-            onClick={() => toggleSort(col)}
-        >
-            {children}
-            <SortIcon col={col} />
-        </TableHead>
-    );
+    }, [rows, driverFilter, dispatcherFilter, typeFilter, truckFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const pageCount = Math.ceil(displayRows.length / pageSize);
-    const pagedRows = displayRows.slice((page - 1) * pageSize, page * pageSize);
+    const pagedRows = useMemo(
+        () => displayRows.slice((page - 1) * pageSize, page * pageSize),
+        [displayRows, page, pageSize],
+    );
+
+    const columns = useMemo<ColumnDef<Row>[]>(() => [
+        { id: 'driver_name', accessorKey: 'driver_name', header: 'Driver', size: 180, minSize: 100 },
+        { id: 'dispatcher', accessorKey: 'dispatcher', header: 'Dispatcher', size: 130, minSize: 80 },
+        { id: 'truck_number', accessorKey: 'truck_number', header: 'Truck', size: 90, minSize: 60, enableSorting: false },
+        { id: 'type', accessorKey: 'type', header: 'Type', size: 70, minSize: 50 },
+        { id: 'days', accessorKey: 'days', header: 'Days', size: 65, minSize: 50 },
+        { id: 'total_gross', accessorKey: 'total_gross', header: 'Gross', size: 110, minSize: 70 },
+        { id: 'total_miles', accessorKey: 'total_miles', header: 'Miles', size: 90, minSize: 70 },
+        { id: 'rpm', accessorKey: 'rpm', header: 'RPM', size: 80, minSize: 60 },
+        { id: 'salary', accessorKey: 'salary', header: 'Salary', size: 110, minSize: 70 },
+        ...expenses.map((e): ColumnDef<Row> => ({
+            id: `expense_${e.name}`,
+            header: e.name,
+            size: 110,
+            minSize: 70,
+            accessorFn: (row) => row.expenses[e.name] ?? null,
+        })),
+        { id: 'total_expenses', accessorKey: 'total_expenses', header: 'Total Exp.', size: 110, minSize: 70 },
+        { id: 'profit_loss', accessorKey: 'profit_loss', header: 'P&L', size: 110, minSize: 70 },
+    ], [expenses]);
+
+    const table = useReactTable({
+        data: pagedRows,
+        columns,
+        state: { sorting, columnSizing, columnVisibility },
+        onSortingChange: (updater) => {
+            setSorting(updater);
+            setPage(1);
+        },
+        onColumnSizingChange: setColumnSizing,
+        onColumnVisibilityChange: setColumnVisibility,
+        getCoreRowModel: getCoreRowModel(),
+        getSortedRowModel: getSortedRowModel(),
+        columnResizeMode: 'onChange',
+    });
+
+    const handleResize = useCallback((id: string, size: number) => {
+        setColumnSizing((prev) => ({ ...prev, [id]: size }));
+    }, []);
+
+    const visibleHeaders = table.getHeaderGroups()[0]?.headers.filter((h) => h.column.getIsVisible()) ?? [];
+
+    function renderCell(row: Row, colId: string) {
+        if (colId === 'driver_name')
+            return (
+                <span className={row.missing_config ? 'font-medium text-amber-600' : ''}>
+                    {row.driver_name}
+                    {row.missing_config && <span className="ml-1 text-xs text-amber-500">(no config)</span>}
+                </span>
+            );
+        if (colId === 'dispatcher') return row.dispatcher;
+        if (colId === 'truck_number') return row.truck_number ?? '—';
+        if (colId === 'type') return row.type ?? '—';
+        if (colId === 'days') return fmtInt(row.days);
+        if (colId === 'total_gross') return fmt(row.total_gross, '$');
+        if (colId === 'total_miles') return fmtInt(row.total_miles);
+        if (colId === 'rpm') return fmt(row.rpm, '$');
+        if (colId === 'salary') return fmt(row.salary, '$');
+        if (colId === 'total_expenses') return fmt(row.total_expenses, '$');
+        if (colId === 'profit_loss')
+            return (
+                <span className={cn('font-semibold tabular-nums', row.profit_loss != null && row.profit_loss < 0 ? 'text-red-600' : 'text-green-700')}>
+                    {fmt(row.profit_loss, '$')}
+                </span>
+            );
+        if (colId.startsWith('expense_')) return fmt(row.expenses[colId.slice('expense_'.length)] ?? null, '$');
+        return null;
+    }
+
+    function renderTotalCell(colId: string) {
+        if (!totalRow) return null;
+        if (colId === 'driver_name') return totalRow.driver_name;
+        if (colId === 'days') return fmtInt(totalRow.days);
+        if (colId === 'total_gross') return fmt(totalRow.total_gross, '$');
+        if (colId === 'total_miles') return fmtInt(totalRow.total_miles);
+        if (colId === 'rpm') return fmt(totalRow.rpm, '$');
+        if (colId === 'salary') return fmt(totalRow.salary, '$');
+        if (colId === 'total_expenses') return fmt(totalRow.total_expenses, '$');
+        if (colId === 'profit_loss')
+            return (
+                <span className={cn('font-semibold tabular-nums', totalRow.profit_loss != null && totalRow.profit_loss < 0 ? 'text-red-600' : 'text-green-700')}>
+                    {fmt(totalRow.profit_loss, '$')}
+                </span>
+            );
+        if (colId.startsWith('expense_')) return fmt(totalRow.expenses[colId.slice('expense_'.length)] ?? null, '$');
+        return null;
+    }
+
+    const activeFilterCount = [
+        driverFilter !== '',
+        dispatcherFilter.length > 0,
+        typeFilter.length > 0,
+        truckFilter.length > 0,
+    ].filter(Boolean).length;
+
+    const clearFilters = () => {
+        setDriverFilter('');
+        setDispatcherFilter([]);
+        setTypeFilter([]);
+        setTruckFilter([]);
+        setPage(1);
+    };
+
+    const allLeafColumns = table.getAllLeafColumns();
+
+    const handleExport = useCallback(() => {
+        const headers = [
+            'Driver',
+            'Dispatcher',
+            'Truck',
+            'Type',
+            'Days',
+            'Gross',
+            'Miles',
+            'RPM',
+            'Salary',
+            ...expenses.map((e) => e.name),
+            'Total Expenses',
+            'P&L',
+        ];
+
+        const driverData = rows
+            .filter((r) => !r.is_total)
+            .map((r) => [
+                r.driver_name,
+                r.dispatcher,
+                r.truck_number ?? '',
+                r.type ?? '',
+                r.days,
+                r.total_gross,
+                r.total_miles,
+                r.rpm,
+                r.salary ?? 0,
+                ...expenses.map((e) => r.expenses[e.name] ?? 0),
+                r.total_expenses ?? 0,
+                r.profit_loss ?? 0,
+            ]);
+
+        const totalRowArr = totalRow
+            ? [
+                  [
+                      'TOTAL',
+                      '',
+                      '',
+                      '',
+                      totalRow.days,
+                      totalRow.total_gross,
+                      totalRow.total_miles,
+                      totalRow.rpm,
+                      totalRow.salary ?? 0,
+                      ...expenses.map((e) => totalRow.expenses[e.name] ?? 0),
+                      totalRow.total_expenses ?? 0,
+                      totalRow.profit_loss ?? 0,
+                  ],
+              ]
+            : [];
+
+        const ws = XLSX.utils.aoa_to_sheet([headers, ...driverData, ...totalRowArr]);
+
+        // Column widths
+        ws['!cols'] = headers.map((h) => ({ wch: Math.max(12, h.length + 2) }));
+
+        // Number format for currency/numeric columns (skip first 4 string cols)
+        const range = XLSX.utils.decode_range(ws['!ref'] as string);
+        for (let R = 1; R <= range.e.r; ++R) {
+            for (let C = 4; C <= range.e.c; ++C) {
+                const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+                const cell = ws[cellRef];
+                if (!cell || typeof cell.v !== 'number') continue;
+                cell.t = 'n';
+                // Days, Miles -> integer; everything else -> currency
+                if (C === 4 || C === 6) {
+                    cell.z = '#,##0';
+                } else {
+                    cell.z = '$#,##0.00';
+                }
+            }
+        }
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'P&L Report');
+
+        const today = new Date().toISOString().slice(0, 10);
+        XLSX.writeFile(wb, `pnl-report-${today}.xlsx`);
+    }, [rows, expenses, totalRow]);
 
     return (
         <div className="flex flex-col gap-3">
-            {/* Filters */}
-            <div className="flex flex-wrap items-center gap-3">
-                <Input
-                    placeholder="Search driver…"
-                    value={driverFilter}
-                    onChange={(e) => setDriverFilter(e.target.value)}
-                    className="h-8 w-44"
-                />
-                <Select
-                    value={dispatcherFilter}
-                    onValueChange={setDispatcherFilter}
-                >
-                    <SelectTrigger className="h-8 w-44">
-                        <SelectValue placeholder="Dispatcher" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {dispatchers.map((d) => (
-                            <SelectItem key={d} value={d}>
-                                {d === 'all' ? 'All dispatchers' : d}
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-                <Select value={typeFilter} onValueChange={setTypeFilter}>
-                    <SelectTrigger className="h-8 w-36">
-                        <SelectValue placeholder="Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {contractTypes.map((t) => (
-                            <SelectItem key={t} value={t}>
-                                {t === 'all' ? 'All types' : t}
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-                <Select value={truckFilter} onValueChange={setTruckFilter}>
-                    <SelectTrigger className="h-8 w-36">
-                        <SelectValue placeholder="Truck" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {trucks.map((t) => (
-                            <SelectItem key={t} value={t}>
-                                {t === 'all' ? 'All trucks' : t}
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
+            {/* Toolbar */}
+            <div className="flex items-center justify-between gap-2">
+                {title && <h1 className="text-xl font-semibold">{title}</h1>}
+                <div className="flex items-center gap-2">
+                    <SettingsPopover
+                        activeFilterCount={activeFilterCount}
+                        onExport={handleExport}
+                        // visibility props
+                        columns={allLeafColumns}
+                        // filter props
+                        driverFilter={driverFilter}
+                        setDriverFilter={(v) => { setDriverFilter(v); setPage(1); }}
+                        dispatchers={dispatchers}
+                        dispatcherFilter={dispatcherFilter}
+                        setDispatcherFilter={(v) => { setDispatcherFilter(v); setPage(1); }}
+                        contractTypes={contractTypes}
+                        typeFilter={typeFilter}
+                        setTypeFilter={(v) => { setTypeFilter(v); setPage(1); }}
+                        trucks={trucks}
+                        truckFilter={truckFilter}
+                        setTruckFilter={(v) => { setTruckFilter(v); setPage(1); }}
+                        clearFilters={clearFilters}
+                    />
+                </div>
             </div>
 
             {/* Table */}
             <div className="overflow-x-auto rounded-lg border">
-                <Table>
+                <Table style={{ minWidth: 'max-content', tableLayout: 'fixed' }}>
                     <TableHeader>
                         <TableRow>
-                            <Th col="driver_name">Driver</Th>
-                            <Th col="dispatcher">Dispatcher</Th>
-                            <TableHead className="px-3 py-2 text-xs whitespace-nowrap">
-                                Truck
-                            </TableHead>
-                            <Th col="type">Type</Th>
-                            <Th col="days">Days</Th>
-                            <Th col="total_gross">Gross</Th>
-                            <Th col="total_miles">Miles</Th>
-                            <Th col="rpm">RPM</Th>
-                            <Th col="salary">Salary</Th>
-                            {expenses.map((e) => (
-                                <Th key={e.id} col={`expense_${e.name}`}>
-                                    {e.name}
-                                </Th>
+                            {visibleHeaders.map((header) => (
+                                <ColHead
+                                    key={header.id}
+                                    id={header.id}
+                                    size={header.column.getSize()}
+                                    isSorted={header.column.getIsSorted()}
+                                    canSort={header.column.getCanSort()}
+                                    onSort={() => header.column.toggleSorting()}
+                                    onResize={handleResize}
+                                >
+                                    {flexRender(header.column.columnDef.header, header.getContext())}
+                                </ColHead>
                             ))}
-                            <Th col="total_expenses">Total Exp.</Th>
-                            <Th col="profit_loss">P&amp;L</Th>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {pagedRows.map((row) => (
+                        {table.getRowModel().rows.map((row) => (
                             <TableRow
-                                key={row.driver_id ?? row.driver_name}
-                                className={
-                                    row.missing_config
-                                        ? 'bg-amber-50 dark:bg-amber-950/20'
-                                        : ''
-                                }
+                                key={row.id}
+                                className={row.original.missing_config ? 'bg-amber-50 dark:bg-amber-950/20' : ''}
                             >
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap">
-                                    <span
-                                        className={
-                                            row.missing_config
-                                                ? 'font-medium text-amber-600'
-                                                : ''
-                                        }
-                                    >
-                                        {row.driver_name}
-                                        {row.missing_config && (
-                                            <span className="ml-1 text-xs text-amber-500">
-                                                (no config)
-                                            </span>
-                                        )}
-                                    </span>
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap">
-                                    {row.dispatcher}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap">
-                                    {row.truck_number ?? '—'}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap">
-                                    {row.type ?? '—'}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmtInt(row.days)}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmt(row.total_gross, '$')}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmtInt(row.total_miles)}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmt(row.rpm, '$')}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmt(row.salary, '$')}
-                                </TableCell>
-                                {expenses.map((e) => (
+                                {row.getVisibleCells().map((cell) => (
                                     <TableCell
-                                        key={e.id}
-                                        className="px-3 py-2 text-sm whitespace-nowrap tabular-nums"
+                                        key={cell.id}
+                                        style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
+                                        className="overflow-hidden px-2 py-2 text-sm whitespace-nowrap text-ellipsis tabular-nums"
                                     >
-                                        {fmt(row.expenses[e.name] ?? null, '$')}
+                                        {renderCell(row.original, cell.column.id)}
                                     </TableCell>
                                 ))}
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmt(row.total_expenses, '$')}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap">
-                                    <span
-                                        className={`font-semibold tabular-nums ${row.profit_loss != null && row.profit_loss < 0 ? 'text-red-600' : 'text-green-700'}`}
-                                    >
-                                        {fmt(row.profit_loss, '$')}
-                                    </span>
-                                </TableCell>
                             </TableRow>
                         ))}
-
-                        {/* Pinned totals row */}
                         {totalRow && (
                             <TableRow className="bg-muted font-bold">
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap">
-                                    {totalRow.driver_name}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap" />
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap" />
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap" />
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmtInt(totalRow.days)}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmt(totalRow.total_gross, '$')}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmtInt(totalRow.total_miles)}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmt(totalRow.rpm, '$')}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmt(totalRow.salary, '$')}
-                                </TableCell>
-                                {expenses.map((e) => (
+                                {visibleHeaders.map((header) => (
                                     <TableCell
-                                        key={e.id}
-                                        className="px-3 py-2 text-sm whitespace-nowrap tabular-nums"
+                                        key={header.id}
+                                        style={{ width: header.column.getSize(), minWidth: header.column.getSize() }}
+                                        className="overflow-hidden px-2 py-2 text-sm whitespace-nowrap text-ellipsis tabular-nums"
                                     >
-                                        {fmt(
-                                            totalRow.expenses[e.name] ?? null,
-                                            '$',
-                                        )}
+                                        {renderTotalCell(header.id)}
                                     </TableCell>
                                 ))}
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap tabular-nums">
-                                    {fmt(totalRow.total_expenses, '$')}
-                                </TableCell>
-                                <TableCell className="px-3 py-2 text-sm whitespace-nowrap">
-                                    <span
-                                        className={`font-semibold tabular-nums ${totalRow.profit_loss != null && totalRow.profit_loss < 0 ? 'text-red-600' : 'text-green-700'}`}
-                                    >
-                                        {fmt(totalRow.profit_loss, '$')}
-                                    </span>
-                                </TableCell>
                             </TableRow>
                         )}
                     </TableBody>
                 </Table>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <span>Rows per page</span>
-                    <Select
-                        value={String(pageSize)}
-                        onValueChange={(v) => setPageSize(Number(v))}
-                    >
-                        <SelectTrigger className="h-7 w-16">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {PAGE_SIZE_OPTIONS.map((n) => (
-                                <SelectItem key={n} value={String(n)}>
-                                    {n}
-                                </SelectItem>
-                            ))}
+                    <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+                        <SelectTrigger className="h-7 w-16"><SelectValue /></SelectTrigger>
+                        <SelectContent side="top">
+                            {PAGE_SIZE_OPTIONS.map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
                         </SelectContent>
                     </Select>
                 </div>
-
                 {pageCount > 1 && (
-                    <Pagination className="flex-1 justify-start">
-                        <PaginationContent>
+                    <Pagination className="mx-0 w-auto flex-1 justify-start">
+                        <PaginationContent className="flex-wrap">
                             <PaginationItem>
                                 <PaginationPrevious
-                                    onClick={() =>
-                                        setPage((p) => Math.max(1, p - 1))
-                                    }
-                                    className={
-                                        page <= 1
-                                            ? 'pointer-events-none opacity-50'
-                                            : 'cursor-pointer'
-                                    }
+                                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                                    className={page <= 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
                                 />
                             </PaginationItem>
                             <PaginationItem>
-                                <span className="px-3 py-2 text-sm text-muted-foreground">
-                                    {(page - 1) * pageSize + 1}–
-                                    {Math.min(
-                                        page * pageSize,
-                                        displayRows.length,
-                                    )}{' '}
-                                    of {displayRows.length} drivers
+                                <span className="px-3 py-2 text-sm whitespace-nowrap text-muted-foreground">
+                                    {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, displayRows.length)} of {displayRows.length} drivers
                                 </span>
                             </PaginationItem>
                             <PaginationItem>
                                 <PaginationNext
-                                    onClick={() =>
-                                        setPage((p) =>
-                                            Math.min(pageCount, p + 1),
-                                        )
-                                    }
-                                    className={
-                                        page >= pageCount
-                                            ? 'pointer-events-none opacity-50'
-                                            : 'cursor-pointer'
-                                    }
+                                    onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                                    className={page >= pageCount ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
                                 />
                             </PaginationItem>
                         </PaginationContent>
                     </Pagination>
                 )}
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Settings popover — Notion-style navigable menu
+// ---------------------------------------------------------------------------
+
+type ViewKey = 'main' | 'visibility' | 'filter';
+
+type Column = ReturnType<ReturnType<typeof useReactTable<Row>>['getAllLeafColumns']>[number];
+
+interface SettingsPopoverProps {
+    activeFilterCount: number;
+    onExport: () => void;
+    columns: Column[];
+    driverFilter: string;
+    setDriverFilter: (v: string) => void;
+    dispatchers: string[];
+    dispatcherFilter: Option[];
+    setDispatcherFilter: (v: Option[]) => void;
+    contractTypes: string[];
+    typeFilter: Option[];
+    setTypeFilter: (v: Option[]) => void;
+    trucks: string[];
+    truckFilter: Option[];
+    setTruckFilter: (v: Option[]) => void;
+    clearFilters: () => void;
+}
+
+function SettingsPopover({
+    activeFilterCount,
+    onExport,
+    columns,
+    driverFilter,
+    setDriverFilter,
+    dispatchers,
+    dispatcherFilter,
+    setDispatcherFilter,
+    contractTypes,
+    typeFilter,
+    setTypeFilter,
+    trucks,
+    truckFilter,
+    setTruckFilter,
+    clearFilters,
+}: SettingsPopoverProps) {
+    const [view, setView] = useState<ViewKey>('main');
+    const visibleCount = columns.filter((c) => c.getIsVisible()).length;
+    const totalCount = columns.length;
+
+    return (
+        <Popover onOpenChange={(open) => !open && setView('main')}>
+            <PopoverTrigger asChild>
+                <button
+                    className={cn(
+                        'inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-accent',
+                        activeFilterCount > 0 ? 'border-primary/40 bg-primary/5 text-primary' : 'text-muted-foreground',
+                    )}
+                >
+                    <Settings2Icon className="h-3.5 w-3.5" />
+                    Settings
+                    {activeFilterCount > 0 && (
+                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                            {activeFilterCount}
+                        </span>
+                    )}
+                </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 overflow-visible p-0">
+                {view === 'main' && (
+                    <div className="flex flex-col py-1">
+                        <p className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                            View settings
+                        </p>
+                        <SettingsRow
+                            icon={<EyeIcon className="h-4 w-4" />}
+                            label="Property visibility"
+                            value={`${visibleCount}/${totalCount}`}
+                            onClick={() => setView('visibility')}
+                        />
+                        <SettingsRow
+                            icon={<FilterIcon className="h-4 w-4" />}
+                            label="Filter"
+                            value={activeFilterCount > 0 ? `${activeFilterCount} active` : undefined}
+                            onClick={() => setView('filter')}
+                        />
+                        <div className="my-1 border-t" />
+                        <SettingsRow
+                            icon={<DownloadIcon className="h-4 w-4" />}
+                            label="Export to XLSX"
+                            onClick={onExport}
+                            showChevron={false}
+                        />
+                    </div>
+                )}
+
+                {view === 'visibility' && (
+                    <VisibilityPanel columns={columns} onBack={() => setView('main')} />
+                )}
+
+                {view === 'filter' && (
+                    <FilterPanel
+                        onBack={() => setView('main')}
+                        activeFilterCount={activeFilterCount}
+                        driverFilter={driverFilter}
+                        setDriverFilter={setDriverFilter}
+                        dispatchers={dispatchers}
+                        dispatcherFilter={dispatcherFilter}
+                        setDispatcherFilter={setDispatcherFilter}
+                        contractTypes={contractTypes}
+                        typeFilter={typeFilter}
+                        setTypeFilter={setTypeFilter}
+                        trucks={trucks}
+                        truckFilter={truckFilter}
+                        setTruckFilter={setTruckFilter}
+                        clearFilters={clearFilters}
+                    />
+                )}
+            </PopoverContent>
+        </Popover>
+    );
+}
+
+function SettingsRow({
+    icon,
+    label,
+    value,
+    onClick,
+    showChevron = true,
+}: {
+    icon: React.ReactNode;
+    label: string;
+    value?: string;
+    onClick: () => void;
+    showChevron?: boolean;
+}) {
+    return (
+        <button
+            onClick={onClick}
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
+        >
+            <span className="text-muted-foreground">{icon}</span>
+            <span className="flex-1 text-left">{label}</span>
+            {value && <span className="text-xs text-muted-foreground">{value}</span>}
+            {showChevron && <ChevronRightIcon className="h-3.5 w-3.5 text-muted-foreground" />}
+        </button>
+    );
+}
+
+function PanelHeader({ title, onBack, action }: { title: string; onBack: () => void; action?: React.ReactNode }) {
+    return (
+        <div className="flex items-center gap-2 border-b px-2 py-2">
+            <button
+                onClick={onBack}
+                className="flex h-6 w-6 items-center justify-center rounded hover:bg-accent"
+                aria-label="Back"
+            >
+                <ChevronLeftIcon className="h-4 w-4" />
+            </button>
+            <p className="flex-1 text-sm font-semibold">{title}</p>
+            {action}
+        </div>
+    );
+}
+
+function VisibilityPanel({ columns, onBack }: { columns: Column[]; onBack: () => void }) {
+    const [search, setSearch] = useState('');
+
+    const filtered = useMemo(() => {
+        if (!search.trim()) return columns;
+        const q = search.toLowerCase();
+        return columns.filter((c) => {
+            const label = typeof c.columnDef.header === 'string' ? c.columnDef.header : c.id;
+            return label.toLowerCase().includes(q);
+        });
+    }, [columns, search]);
+
+    const anyVisible = columns.some((c) => c.getIsVisible());
+
+    return (
+        <div className="flex flex-col">
+            <PanelHeader
+                title="Property visibility"
+                onBack={onBack}
+                action={
+                    <button
+                        onClick={() => columns.forEach((c) => c.toggleVisibility(!anyVisible))}
+                        className="text-xs font-medium text-primary hover:underline"
+                    >
+                        {anyVisible ? 'Hide all' : 'Show all'}
+                    </button>
+                }
+            />
+            <div className="border-b p-2">
+                <div className="relative flex items-center">
+                    <SearchIcon className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground" />
+                    <input
+                        autoFocus
+                        placeholder="Search for a property…"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        className="h-8 w-full rounded-md border bg-transparent pl-7 pr-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    />
+                </div>
+            </div>
+            <div className="max-h-80 overflow-y-auto py-1">
+                {filtered.length === 0 && (
+                    <p className="px-3 py-4 text-center text-xs text-muted-foreground">No properties</p>
+                )}
+                {filtered.map((col) => {
+                    const label = typeof col.columnDef.header === 'string' ? col.columnDef.header : col.id;
+                    const visible = col.getIsVisible();
+                    return (
+                        <button
+                            key={col.id}
+                            onClick={() => col.toggleVisibility(!visible)}
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent"
+                        >
+                            <span className="flex-1 text-left">{label}</span>
+                            {visible ? (
+                                <EyeIcon className="h-4 w-4 text-foreground" />
+                            ) : (
+                                <EyeOffIcon className="h-4 w-4 text-muted-foreground/60" />
+                            )}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+function FilterPanel({
+    onBack,
+    activeFilterCount,
+    driverFilter,
+    setDriverFilter,
+    dispatchers,
+    dispatcherFilter,
+    setDispatcherFilter,
+    contractTypes,
+    typeFilter,
+    setTypeFilter,
+    trucks,
+    truckFilter,
+    setTruckFilter,
+    clearFilters,
+}: Omit<SettingsPopoverProps, 'columns' | 'onExport'> & { onBack: () => void }) {
+    return (
+        <div className="flex flex-col">
+            <PanelHeader
+                title="Filter"
+                onBack={onBack}
+                action={
+                    activeFilterCount > 0 ? (
+                        <button onClick={clearFilters} className="text-xs font-medium text-primary hover:underline">
+                            Clear all
+                        </button>
+                    ) : undefined
+                }
+            />
+            <div className="flex flex-col gap-3 p-3">
+                <div className="relative flex items-center">
+                    <SearchIcon className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground" />
+                    <input
+                        placeholder="Search driver…"
+                        value={driverFilter}
+                        onChange={(e) => setDriverFilter(e.target.value)}
+                        className="h-8 w-full rounded-md border bg-transparent pl-7 pr-7 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    />
+                    {driverFilter && (
+                        <button onClick={() => setDriverFilter('')} className="absolute right-2">
+                            <XIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                        </button>
+                    )}
+                </div>
+                <div className="flex flex-col gap-1">
+                    <label className="text-xs text-muted-foreground">Dispatcher</label>
+                    <MultipleSelector
+                        value={dispatcherFilter}
+                        onChange={setDispatcherFilter}
+                        defaultOptions={dispatchers.map((d) => ({ label: d, value: d }))}
+                        placeholder="All dispatchers"
+                        hideClearAllButton
+                        emptyIndicator={<p className="text-center text-xs text-muted-foreground">No results</p>}
+                    />
+                </div>
+                <div className="flex flex-col gap-1">
+                    <label className="text-xs text-muted-foreground">Type</label>
+                    <MultipleSelector
+                        value={typeFilter}
+                        onChange={setTypeFilter}
+                        defaultOptions={contractTypes.map((t) => ({ label: t, value: t }))}
+                        placeholder="All types"
+                        hideClearAllButton
+                        emptyIndicator={<p className="text-center text-xs text-muted-foreground">No results</p>}
+                    />
+                </div>
+                <div className="flex flex-col gap-1">
+                    <label className="text-xs text-muted-foreground">Truck</label>
+                    <MultipleSelector
+                        value={truckFilter}
+                        onChange={setTruckFilter}
+                        defaultOptions={trucks.map((t) => ({ label: t, value: t }))}
+                        placeholder="All trucks"
+                        hideClearAllButton
+                        emptyIndicator={<p className="text-center text-xs text-muted-foreground">No results</p>}
+                    />
+                </div>
             </div>
         </div>
     );
