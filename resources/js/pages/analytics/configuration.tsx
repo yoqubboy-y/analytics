@@ -503,12 +503,19 @@ export default function Configuration({
                                                             <div className="flex flex-col gap-1">
                                                                 <Input
                                                                     type="number"
-                                                                    step={editingExpense.calculation_type === 'percentage_of_gross' ? '0.001' : '0.01'}
+                                                                    step={
+                                                                        editingExpense.calculation_type ===
+                                                                        'percentage_of_gross'
+                                                                            ? '0.001'
+                                                                            : '0.01'
+                                                                    }
                                                                     className="w-28"
                                                                     value={
                                                                         editingExpense.rate
                                                                     }
-                                                                    onChange={(e) =>
+                                                                    onChange={(
+                                                                        e,
+                                                                    ) =>
                                                                         setEditingExpense(
                                                                             {
                                                                                 ...editingExpense,
@@ -519,49 +526,107 @@ export default function Configuration({
                                                                         )
                                                                     }
                                                                 />
-                                                                {editingExpense.calculation_type === 'percentage_of_gross' && (
-                                                                    <span className="text-xs text-muted-foreground">e.g. 0.026 = 2.6%</span>
+                                                                {editingExpense.calculation_type ===
+                                                                    'percentage_of_gross' && (
+                                                                    <span className="text-xs text-muted-foreground">
+                                                                        e.g.
+                                                                        0.026 =
+                                                                        2.6%
+                                                                    </span>
                                                                 )}
-                                                                {editingExpense.calculation_type === 'per_mile' && (
-                                                                    <span className="text-xs text-muted-foreground">e.g. 0.20 = 20¢/mile</span>
+                                                                {editingExpense.calculation_type ===
+                                                                    'per_mile' && (
+                                                                    <span className="text-xs text-muted-foreground">
+                                                                        e.g.
+                                                                        0.20 =
+                                                                        20¢/mile
+                                                                    </span>
                                                                 )}
                                                             </div>
+                                                        ) : exp.calculation_type ===
+                                                          'percentage_of_gross' ? (
+                                                            `${(exp.rate * 100).toFixed(2)}%`
                                                         ) : (
-                                                            exp.calculation_type === 'percentage_of_gross'
-                                                                ? `${(exp.rate * 100).toFixed(2)}%`
-                                                                : exp.rate
+                                                            exp.rate
                                                         )}
                                                     </TableCell>
                                                     <TableCell className="text-sm text-muted-foreground">
                                                         {isEditing ? (
                                                             <div className="flex flex-col gap-1">
-                                                                <span className="text-xs text-muted-foreground">Applies to</span>
+                                                                <span className="text-xs text-muted-foreground">
+                                                                    Applies to
+                                                                </span>
                                                                 <ToggleGroup
                                                                     type="multiple"
                                                                     variant="outline"
                                                                     size="sm"
-                                                                    value={editingExpense.applies_to ?? []}
-                                                                    onValueChange={(v) =>
-                                                                        setEditingExpense({
-                                                                            ...editingExpense,
-                                                                            applies_to: v.length > 0 ? v : null,
-                                                                        })
+                                                                    value={
+                                                                        editingExpense.applies_to ??
+                                                                        []
+                                                                    }
+                                                                    onValueChange={(
+                                                                        v,
+                                                                    ) =>
+                                                                        setEditingExpense(
+                                                                            {
+                                                                                ...editingExpense,
+                                                                                applies_to:
+                                                                                    v.length >
+                                                                                    0
+                                                                                        ? v
+                                                                                        : null,
+                                                                            },
+                                                                        )
                                                                     }
                                                                 >
-                                                                    {contractTypes.map((ct) => (
-                                                                        <ToggleGroupItem key={ct.value} value={ct.value}>
-                                                                            {ct.label}
-                                                                        </ToggleGroupItem>
-                                                                    ))}
+                                                                    {contractTypes.map(
+                                                                        (
+                                                                            ct,
+                                                                        ) => (
+                                                                            <ToggleGroupItem
+                                                                                key={
+                                                                                    ct.value
+                                                                                }
+                                                                                value={
+                                                                                    ct.value
+                                                                                }
+                                                                            >
+                                                                                {
+                                                                                    ct.label
+                                                                                }
+                                                                            </ToggleGroupItem>
+                                                                        ),
+                                                                    )}
                                                                 </ToggleGroup>
                                                                 <span className="text-xs text-muted-foreground">
-                                                                    {!editingExpense.applies_to || editingExpense.applies_to.length === 0 ? 'All contract types' : 'Selected only'}
+                                                                    {!editingExpense.applies_to ||
+                                                                    editingExpense
+                                                                        .applies_to
+                                                                        .length ===
+                                                                        0
+                                                                        ? 'All contract types'
+                                                                        : 'Selected only'}
                                                                 </span>
                                                             </div>
+                                                        ) : exp.applies_to &&
+                                                          exp.applies_to
+                                                              .length > 0 ? (
+                                                            exp.applies_to
+                                                                .map(
+                                                                    (v) =>
+                                                                        contractTypes.find(
+                                                                            (
+                                                                                ct,
+                                                                            ) =>
+                                                                                ct.value ===
+                                                                                v,
+                                                                        )
+                                                                            ?.label ??
+                                                                        v,
+                                                                )
+                                                                .join(', ')
                                                         ) : (
-                                                            exp.applies_to && exp.applies_to.length > 0
-                                                                ? exp.applies_to.map((v) => contractTypes.find((ct) => ct.value === v)?.label ?? v).join(', ')
-                                                                : 'All'
+                                                            'All'
                                                         )}
                                                     </TableCell>
                                                     <TableCell className="text-right">
@@ -682,7 +747,12 @@ export default function Configuration({
                                     <Input
                                         id="exp-rate"
                                         type="number"
-                                        step={newExpense.calculation_type === 'percentage_of_gross' ? '0.001' : '0.01'}
+                                        step={
+                                            newExpense.calculation_type ===
+                                            'percentage_of_gross'
+                                                ? '0.001'
+                                                : '0.01'
+                                        }
                                         required
                                         value={newExpense.rate}
                                         onChange={(e) =>
@@ -691,13 +761,26 @@ export default function Configuration({
                                                 rate: e.target.value,
                                             })
                                         }
-                                        placeholder={newExpense.calculation_type === 'percentage_of_gross' ? '0.026' : '0.00'}
+                                        placeholder={
+                                            newExpense.calculation_type ===
+                                            'percentage_of_gross'
+                                                ? '0.026'
+                                                : '0.00'
+                                        }
                                     />
-                                    {newExpense.calculation_type === 'percentage_of_gross' && (
-                                        <span className="text-xs text-muted-foreground">Enter as decimal — e.g. <strong>0.026</strong> = 2.6%</span>
+                                    {newExpense.calculation_type ===
+                                        'percentage_of_gross' && (
+                                        <span className="text-xs text-muted-foreground">
+                                            Enter as decimal — e.g.{' '}
+                                            <strong>0.026</strong> = 2.6%
+                                        </span>
                                     )}
-                                    {newExpense.calculation_type === 'per_mile' && (
-                                        <span className="text-xs text-muted-foreground">e.g. <strong>0.20</strong> = 20¢/mile</span>
+                                    {newExpense.calculation_type ===
+                                        'per_mile' && (
+                                        <span className="text-xs text-muted-foreground">
+                                            e.g. <strong>0.20</strong> =
+                                            20¢/mile
+                                        </span>
                                     )}
                                 </div>
                                 <div className="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
@@ -716,7 +799,12 @@ export default function Configuration({
                                     />
                                 </div>
                                 <div className="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
-                                    <Label>Applies To <span className="text-muted-foreground font-normal">(leave blank for all)</span></Label>
+                                    <Label>
+                                        Applies To{' '}
+                                        <span className="font-normal text-muted-foreground">
+                                            (leave blank for all)
+                                        </span>
+                                    </Label>
                                     <ToggleGroup
                                         type="multiple"
                                         variant="outline"
@@ -730,7 +818,10 @@ export default function Configuration({
                                         }
                                     >
                                         {contractTypes.map((ct) => (
-                                            <ToggleGroupItem key={ct.value} value={ct.value}>
+                                            <ToggleGroupItem
+                                                key={ct.value}
+                                                value={ct.value}
+                                            >
                                                 {ct.label}
                                             </ToggleGroupItem>
                                         ))}
