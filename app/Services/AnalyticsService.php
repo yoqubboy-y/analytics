@@ -6,6 +6,7 @@ use App\Models\DriverConfig;
 use App\Models\Team;
 use App\Models\TeamExpense;
 use Carbon\Carbon;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -19,7 +20,7 @@ class AnalyticsService
      *
      * @return Collection<int, array<string, mixed>>
      */
-    public function weeklyReport(Team $team, Carbon $startDate, Carbon $endDate): Collection
+    public function weeklyReport(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): Collection
     {
         /** @var Collection<int, TeamExpense> $expenses */
         $expenses = $team->expenses;
@@ -41,7 +42,7 @@ class AnalyticsService
      *
      * @return Collection<int, object>
      */
-    private function fetchRawData(Team $team, Carbon $startDate, Carbon $endDate): Collection
+    private function fetchRawData(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): Collection
     {
         $sql = <<<'SQL'
             WITH week_boards AS (
@@ -85,13 +86,20 @@ class AnalyticsService
             driver_totals AS (
                 SELECT
                     wb.primary_driver_id AS driver_id,
-                    MAX(wb.secondary_driver_id) AS secondary_driver_id,
-                    wb.dispatcher_id,
+                    (
+                        SELECT wb2.dispatcher_id
+                        FROM week_boards wb2
+                        WHERE wb2.primary_driver_id = wb.primary_driver_id
+                          AND wb2.dispatcher_id IS NOT NULL
+                        GROUP BY wb2.dispatcher_id
+                        ORDER BY COUNT(*) DESC
+                        LIMIT 1
+                    ) AS dispatcher_id,
                     SUM(wb.rate) AS total_gross,
                     SUM(wb.miles) AS total_miles,
                     BOOL_OR(wb.secondary_driver_id IS NOT NULL) AS is_team
                 FROM week_boards wb
-                GROUP BY wb.primary_driver_id, wb.dispatcher_id
+                GROUP BY wb.primary_driver_id
             )
             SELECT
                 dt.driver_id,
@@ -105,6 +113,7 @@ class AnalyticsService
             FROM driver_totals dt
             JOIN drivers d ON d.id = dt.driver_id AND d.is_deleted = FALSE
             JOIN users drv_user ON drv_user.id = d.user_id AND drv_user.is_deleted = FALSE
+            JOIN company_users cu ON cu.user_id = drv_user.id AND cu.company_id = :company_id AND cu.is_deleted = FALSE
             LEFT JOIN trucks t ON t.id = d.current_truck_id
             LEFT JOIN dispatchers disp ON disp.id = dt.dispatcher_id AND disp.is_deleted = FALSE
             LEFT JOIN users disp_user ON disp_user.id = disp.user_id AND disp_user.is_deleted = FALSE
@@ -190,6 +199,28 @@ class AnalyticsService
             'missing_config' => false,
             'is_total' => false,
         ];
+    }
+
+    /**
+     * Get a mapping of external_driver_id → driver_name for a team.
+     *
+     * @return Collection<int, string>
+     */
+    public function getDriverNames(Team $team): Collection
+    {
+        $results = DB::connection('analytics')->select(
+            <<<'SQL'
+                SELECT d.id AS driver_id,
+                       CONCAT(u.first_name, ' ', u.last_name) AS driver_name
+                FROM drivers d
+                JOIN users u ON u.id = d.user_id AND u.is_deleted = FALSE
+                JOIN company_users cu ON cu.user_id = u.id AND cu.company_id = :company_id AND cu.is_deleted = FALSE
+                WHERE d.is_deleted = FALSE
+            SQL,
+            ['company_id' => $team->external_company_id]
+        );
+
+        return collect($results)->pluck('driver_name', 'driver_id');
     }
 
     /**

@@ -1,0 +1,760 @@
+import { Head, router, usePage } from '@inertiajs/react';
+import { useState } from 'react';
+import {
+    destroyExpense,
+    index as configurationIndex,
+    storeExpense,
+    updateDriverConfig,
+    updateExpense,
+} from '@/actions/App/Http/Controllers/Analytics/ConfigurationController';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+    Pagination,
+    PaginationContent,
+    PaginationItem,
+    PaginationNext,
+    PaginationPrevious,
+} from '@/components/ui/pagination';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+
+type ContractType = { value: string; label: string };
+type CalculationType = { value: string; label: string };
+
+type DriverConfig = {
+    id: number;
+    external_driver_id: number;
+    driver_name: string;
+    contract_type: string;
+    tariff_rate: number;
+};
+
+type TeamExpense = {
+    id: number;
+    name: string;
+    description: string | null;
+    calculation_type: string;
+    rate: number;
+    applies_to: string[] | null;
+    sort_order: number;
+};
+
+type Props = {
+    driverConfigs: DriverConfig[];
+    expenses: TeamExpense[];
+    contractTypes: ContractType[];
+    calculationTypes: CalculationType[];
+};
+
+const emptyExpense = {
+    name: '',
+    description: '',
+    calculation_type: 'flat',
+    rate: '',
+    applies_to: [] as string[],
+    sort_order: 0,
+};
+
+export default function Configuration({
+    driverConfigs,
+    expenses,
+    contractTypes,
+    calculationTypes,
+}: Props) {
+    const page = usePage();
+    const slug = page.props.currentTeam?.slug ?? '';
+
+    // --- Driver Config Editing ---
+    const [driverPage, setDriverPage] = useState(1);
+    const [driverPageSize, setDriverPageSize] = useState(15);
+    const driverPageCount = Math.ceil(driverConfigs.length / driverPageSize);
+    const pagedDriverConfigs = driverConfigs.slice(
+        (driverPage - 1) * driverPageSize,
+        driverPage * driverPageSize,
+    );
+
+    const [editingDriver, setEditingDriver] = useState<{
+        id: number;
+        contract_type: string;
+        tariff_rate: string;
+    } | null>(null);
+
+    function startEditDriver(dc: DriverConfig) {
+        setEditingDriver({
+            id: dc.id,
+            contract_type: dc.contract_type,
+            tariff_rate: String(dc.tariff_rate),
+        });
+    }
+
+    function saveDriver() {
+        if (!editingDriver) return;
+        router[updateDriverConfig(slug, editingDriver.id).method](
+            updateDriverConfig.url(slug, editingDriver.id),
+            {
+                contract_type: editingDriver.contract_type,
+                tariff_rate: parseFloat(editingDriver.tariff_rate),
+            },
+            { onSuccess: () => setEditingDriver(null) },
+        );
+    }
+
+    // --- Team Expense Editing ---
+    const [newExpense, setNewExpense] = useState({ ...emptyExpense });
+    const [editingExpense, setEditingExpense] = useState<
+        (TeamExpense & { rate: string }) | null
+    >(null);
+
+    function submitNewExpense(e: React.FormEvent) {
+        e.preventDefault();
+        router[storeExpense(slug).method](
+            storeExpense.url(slug),
+            {
+                ...newExpense,
+                rate: parseFloat(newExpense.rate as string),
+                applies_to:
+                    newExpense.applies_to.length > 0
+                        ? newExpense.applies_to
+                        : null,
+            },
+            { onSuccess: () => setNewExpense({ ...emptyExpense }) },
+        );
+    }
+
+    function saveExpense() {
+        if (!editingExpense) return;
+        router[updateExpense(slug, editingExpense.id).method](
+            updateExpense.url(slug, editingExpense.id),
+            {
+                name: editingExpense.name,
+                description: editingExpense.description,
+                calculation_type: editingExpense.calculation_type,
+                rate: parseFloat(editingExpense.rate as string),
+                applies_to:
+                    editingExpense.applies_to &&
+                    editingExpense.applies_to.length > 0
+                        ? editingExpense.applies_to
+                        : null,
+                sort_order: editingExpense.sort_order,
+            },
+            { onSuccess: () => setEditingExpense(null) },
+        );
+    }
+
+    function deleteExpense(id: number) {
+        if (!confirm('Delete this expense?')) return;
+        router[destroyExpense(slug, id).method](destroyExpense.url(slug, id));
+    }
+
+    return (
+        <>
+            <Head title="Configurations" />
+            <div className="flex flex-col gap-4 p-4">
+                <Tabs defaultValue="drivers">
+                    <TabsList className="gap-1 bg-transparent">
+                        <TabsTrigger
+                            className="rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
+                            value="drivers"
+                        >
+                            Driver Contracts
+                        </TabsTrigger>
+                        <TabsTrigger
+                            className="rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
+                            value="expenses"
+                        >
+                            Team Expenses
+                        </TabsTrigger>
+                    </TabsList>
+
+                    {/* Driver Contracts Tab */}
+                    <TabsContent value="drivers" className="mt-4">
+                        <div className="overflow-x-auto rounded-lg border">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Driver</TableHead>
+                                        <TableHead>Contract Type</TableHead>
+                                        <TableHead>Rate</TableHead>
+                                        <TableHead></TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {pagedDriverConfigs.map((dc) => {
+                                        const isEditing =
+                                            editingDriver?.id === dc.id;
+                                        return (
+                                            <TableRow key={dc.id}>
+                                                <TableCell className="font-medium">
+                                                    {dc.driver_name}
+                                                </TableCell>
+                                                <TableCell>
+                                                    {isEditing ? (
+                                                        <Select
+                                                            value={
+                                                                editingDriver.contract_type
+                                                            }
+                                                            onValueChange={(
+                                                                v,
+                                                            ) =>
+                                                                setEditingDriver(
+                                                                    {
+                                                                        ...editingDriver,
+                                                                        contract_type:
+                                                                            v,
+                                                                    },
+                                                                )
+                                                            }
+                                                        >
+                                                            <SelectTrigger className="w-40">
+                                                                <SelectValue />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                {contractTypes.map(
+                                                                    (ct) => (
+                                                                        <SelectItem
+                                                                            key={
+                                                                                ct.value
+                                                                            }
+                                                                            value={
+                                                                                ct.value
+                                                                            }
+                                                                        >
+                                                                            {
+                                                                                ct.label
+                                                                            }
+                                                                        </SelectItem>
+                                                                    ),
+                                                                )}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    ) : (
+                                                        (contractTypes.find(
+                                                            (ct) =>
+                                                                ct.value ===
+                                                                dc.contract_type,
+                                                        )?.label ??
+                                                        dc.contract_type)
+                                                    )}
+                                                </TableCell>
+                                                <TableCell>
+                                                    {isEditing ? (
+                                                        <Input
+                                                            type="number"
+                                                            step="0.01"
+                                                            className="w-28"
+                                                            value={
+                                                                editingDriver.tariff_rate
+                                                            }
+                                                            onChange={(e) =>
+                                                                setEditingDriver(
+                                                                    {
+                                                                        ...editingDriver,
+                                                                        tariff_rate:
+                                                                            e
+                                                                                .target
+                                                                                .value,
+                                                                    },
+                                                                )
+                                                            }
+                                                        />
+                                                    ) : (
+                                                        dc.tariff_rate
+                                                    )}
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                    {isEditing ? (
+                                                        <div className="flex justify-end gap-2">
+                                                            <Button
+                                                                size="sm"
+                                                                onClick={
+                                                                    saveDriver
+                                                                }
+                                                            >
+                                                                Save
+                                                            </Button>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="ghost"
+                                                                onClick={() =>
+                                                                    setEditingDriver(
+                                                                        null,
+                                                                    )
+                                                                }
+                                                            >
+                                                                Cancel
+                                                            </Button>
+                                                        </div>
+                                                    ) : (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            onClick={() =>
+                                                                startEditDriver(
+                                                                    dc,
+                                                                )
+                                                            }
+                                                        >
+                                                            Edit
+                                                        </Button>
+                                                    )}
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })}
+                                </TableBody>
+                            </Table>
+                        </div>
+
+                        <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <span>Rows per page</span>
+                                <Select
+                                    value={String(driverPageSize)}
+                                    onValueChange={(v) => {
+                                        setDriverPageSize(Number(v));
+                                        setDriverPage(1);
+                                    }}
+                                >
+                                    <SelectTrigger className="h-7 w-16">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {[10, 15, 25, 50, 100].map((n) => (
+                                            <SelectItem
+                                                key={n}
+                                                value={String(n)}
+                                            >
+                                                {n}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            {driverPageCount > 1 && (
+                                <Pagination className="flex-1 justify-start">
+                                    <PaginationContent>
+                                        <PaginationItem>
+                                            <PaginationPrevious
+                                                onClick={() =>
+                                                    setDriverPage((p) =>
+                                                        Math.max(1, p - 1),
+                                                    )
+                                                }
+                                                className={
+                                                    driverPage <= 1
+                                                        ? 'pointer-events-none opacity-50'
+                                                        : 'cursor-pointer'
+                                                }
+                                            />
+                                        </PaginationItem>
+                                        <PaginationItem>
+                                            <span className="px-3 py-2 text-sm text-muted-foreground">
+                                                {(driverPage - 1) *
+                                                    driverPageSize +
+                                                    1}
+                                                –
+                                                {Math.min(
+                                                    driverPage * driverPageSize,
+                                                    driverConfigs.length,
+                                                )}{' '}
+                                                of {driverConfigs.length}{' '}
+                                                drivers
+                                            </span>
+                                        </PaginationItem>
+                                        <PaginationItem>
+                                            <PaginationNext
+                                                onClick={() =>
+                                                    setDriverPage((p) =>
+                                                        Math.min(
+                                                            driverPageCount,
+                                                            p + 1,
+                                                        ),
+                                                    )
+                                                }
+                                                className={
+                                                    driverPage >=
+                                                    driverPageCount
+                                                        ? 'pointer-events-none opacity-50'
+                                                        : 'cursor-pointer'
+                                                }
+                                            />
+                                        </PaginationItem>
+                                    </PaginationContent>
+                                </Pagination>
+                            )}
+                        </div>
+                    </TabsContent>
+
+                    {/* Team Expenses Tab */}
+                    <TabsContent
+                        value="expenses"
+                        className="mt-4 flex flex-col gap-4"
+                    >
+                        {expenses.length > 0 && (
+                            <div className="overflow-x-auto rounded-lg border">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Name</TableHead>
+                                            <TableHead>Type</TableHead>
+                                            <TableHead>Rate</TableHead>
+                                            <TableHead>Applies To</TableHead>
+                                            <TableHead></TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {expenses.map((exp) => {
+                                            const isEditing =
+                                                editingExpense?.id === exp.id;
+                                            return (
+                                                <TableRow key={exp.id}>
+                                                    <TableCell>
+                                                        {isEditing ? (
+                                                            <Input
+                                                                value={
+                                                                    editingExpense.name
+                                                                }
+                                                                onChange={(e) =>
+                                                                    setEditingExpense(
+                                                                        {
+                                                                            ...editingExpense,
+                                                                            name: e
+                                                                                .target
+                                                                                .value,
+                                                                        },
+                                                                    )
+                                                                }
+                                                            />
+                                                        ) : (
+                                                            exp.name
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        {isEditing ? (
+                                                            <Select
+                                                                value={
+                                                                    editingExpense.calculation_type
+                                                                }
+                                                                onValueChange={(
+                                                                    v,
+                                                                ) =>
+                                                                    setEditingExpense(
+                                                                        {
+                                                                            ...editingExpense,
+                                                                            calculation_type:
+                                                                                v,
+                                                                        },
+                                                                    )
+                                                                }
+                                                            >
+                                                                <SelectTrigger className="w-36">
+                                                                    <SelectValue />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    {calculationTypes.map(
+                                                                        (
+                                                                            ct,
+                                                                        ) => (
+                                                                            <SelectItem
+                                                                                key={
+                                                                                    ct.value
+                                                                                }
+                                                                                value={
+                                                                                    ct.value
+                                                                                }
+                                                                            >
+                                                                                {
+                                                                                    ct.label
+                                                                                }
+                                                                            </SelectItem>
+                                                                        ),
+                                                                    )}
+                                                                </SelectContent>
+                                                            </Select>
+                                                        ) : (
+                                                            (calculationTypes.find(
+                                                                (ct) =>
+                                                                    ct.value ===
+                                                                    exp.calculation_type,
+                                                            )?.label ??
+                                                            exp.calculation_type)
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        {isEditing ? (
+                                                            <div className="flex flex-col gap-1">
+                                                                <Input
+                                                                    type="number"
+                                                                    step={editingExpense.calculation_type === 'percentage_of_gross' ? '0.001' : '0.01'}
+                                                                    className="w-28"
+                                                                    value={
+                                                                        editingExpense.rate
+                                                                    }
+                                                                    onChange={(e) =>
+                                                                        setEditingExpense(
+                                                                            {
+                                                                                ...editingExpense,
+                                                                                rate: e
+                                                                                    .target
+                                                                                    .value,
+                                                                            },
+                                                                        )
+                                                                    }
+                                                                />
+                                                                {editingExpense.calculation_type === 'percentage_of_gross' && (
+                                                                    <span className="text-xs text-muted-foreground">e.g. 0.026 = 2.6%</span>
+                                                                )}
+                                                                {editingExpense.calculation_type === 'per_mile' && (
+                                                                    <span className="text-xs text-muted-foreground">e.g. 0.20 = 20¢/mile</span>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            exp.calculation_type === 'percentage_of_gross'
+                                                                ? `${(exp.rate * 100).toFixed(2)}%`
+                                                                : exp.rate
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell className="text-sm text-muted-foreground">
+                                                        {isEditing ? (
+                                                            <div className="flex flex-col gap-1">
+                                                                <span className="text-xs text-muted-foreground">Applies to</span>
+                                                                <ToggleGroup
+                                                                    type="multiple"
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    value={editingExpense.applies_to ?? []}
+                                                                    onValueChange={(v) =>
+                                                                        setEditingExpense({
+                                                                            ...editingExpense,
+                                                                            applies_to: v.length > 0 ? v : null,
+                                                                        })
+                                                                    }
+                                                                >
+                                                                    {contractTypes.map((ct) => (
+                                                                        <ToggleGroupItem key={ct.value} value={ct.value}>
+                                                                            {ct.label}
+                                                                        </ToggleGroupItem>
+                                                                    ))}
+                                                                </ToggleGroup>
+                                                                <span className="text-xs text-muted-foreground">
+                                                                    {!editingExpense.applies_to || editingExpense.applies_to.length === 0 ? 'All contract types' : 'Selected only'}
+                                                                </span>
+                                                            </div>
+                                                        ) : (
+                                                            exp.applies_to && exp.applies_to.length > 0
+                                                                ? exp.applies_to.map((v) => contractTypes.find((ct) => ct.value === v)?.label ?? v).join(', ')
+                                                                : 'All'
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell className="text-right">
+                                                        {isEditing ? (
+                                                            <div className="flex justify-end gap-2">
+                                                                <Button
+                                                                    size="sm"
+                                                                    onClick={
+                                                                        saveExpense
+                                                                    }
+                                                                >
+                                                                    Save
+                                                                </Button>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="ghost"
+                                                                    onClick={() =>
+                                                                        setEditingExpense(
+                                                                            null,
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    Cancel
+                                                                </Button>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex justify-end gap-2">
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    onClick={() =>
+                                                                        setEditingExpense(
+                                                                            {
+                                                                                ...exp,
+                                                                                rate: String(
+                                                                                    exp.rate,
+                                                                                ),
+                                                                            },
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    Edit
+                                                                </Button>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="destructive"
+                                                                    onClick={() =>
+                                                                        deleteExpense(
+                                                                            exp.id,
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    Delete
+                                                                </Button>
+                                                            </div>
+                                                        )}
+                                                    </TableCell>
+                                                </TableRow>
+                                            );
+                                        })}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        )}
+
+                        {/* Add New Expense Form */}
+                        <form
+                            onSubmit={submitNewExpense}
+                            className="rounded-lg border p-4"
+                        >
+                            <h3 className="mb-3 font-medium">Add Expense</h3>
+                            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                <div className="flex flex-col gap-1">
+                                    <Label htmlFor="exp-name">Name</Label>
+                                    <Input
+                                        id="exp-name"
+                                        required
+                                        value={newExpense.name}
+                                        onChange={(e) =>
+                                            setNewExpense({
+                                                ...newExpense,
+                                                name: e.target.value,
+                                            })
+                                        }
+                                        placeholder="e.g. Fuel Surcharge"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <Label htmlFor="exp-type">
+                                        Calculation Type
+                                    </Label>
+                                    <Select
+                                        value={newExpense.calculation_type}
+                                        onValueChange={(v) =>
+                                            setNewExpense({
+                                                ...newExpense,
+                                                calculation_type: v,
+                                            })
+                                        }
+                                    >
+                                        <SelectTrigger id="exp-type">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {calculationTypes.map((ct) => (
+                                                <SelectItem
+                                                    key={ct.value}
+                                                    value={ct.value}
+                                                >
+                                                    {ct.label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <Label htmlFor="exp-rate">Rate</Label>
+                                    <Input
+                                        id="exp-rate"
+                                        type="number"
+                                        step={newExpense.calculation_type === 'percentage_of_gross' ? '0.001' : '0.01'}
+                                        required
+                                        value={newExpense.rate}
+                                        onChange={(e) =>
+                                            setNewExpense({
+                                                ...newExpense,
+                                                rate: e.target.value,
+                                            })
+                                        }
+                                        placeholder={newExpense.calculation_type === 'percentage_of_gross' ? '0.026' : '0.00'}
+                                    />
+                                    {newExpense.calculation_type === 'percentage_of_gross' && (
+                                        <span className="text-xs text-muted-foreground">Enter as decimal — e.g. <strong>0.026</strong> = 2.6%</span>
+                                    )}
+                                    {newExpense.calculation_type === 'per_mile' && (
+                                        <span className="text-xs text-muted-foreground">e.g. <strong>0.20</strong> = 20¢/mile</span>
+                                    )}
+                                </div>
+                                <div className="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
+                                    <Label htmlFor="exp-desc">
+                                        Description (optional)
+                                    </Label>
+                                    <Input
+                                        id="exp-desc"
+                                        value={newExpense.description}
+                                        onChange={(e) =>
+                                            setNewExpense({
+                                                ...newExpense,
+                                                description: e.target.value,
+                                            })
+                                        }
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1 sm:col-span-2 lg:col-span-3">
+                                    <Label>Applies To <span className="text-muted-foreground font-normal">(leave blank for all)</span></Label>
+                                    <ToggleGroup
+                                        type="multiple"
+                                        variant="outline"
+                                        className="justify-start"
+                                        value={newExpense.applies_to}
+                                        onValueChange={(v) =>
+                                            setNewExpense({
+                                                ...newExpense,
+                                                applies_to: v,
+                                            })
+                                        }
+                                    >
+                                        {contractTypes.map((ct) => (
+                                            <ToggleGroupItem key={ct.value} value={ct.value}>
+                                                {ct.label}
+                                            </ToggleGroupItem>
+                                        ))}
+                                    </ToggleGroup>
+                                </div>
+                            </div>
+                            <div className="mt-4">
+                                <Button type="submit">Add Expense</Button>
+                            </div>
+                        </form>
+                    </TabsContent>
+                </Tabs>
+            </div>
+        </>
+    );
+}
+
+Configuration.layout = (props: { currentTeam?: { slug: string } | null }) => ({
+    breadcrumbs: [
+        {
+            title: 'Configurations',
+            href: props.currentTeam
+                ? configurationIndex.url(props.currentTeam.slug)
+                : '/',
+        },
+    ],
+});
