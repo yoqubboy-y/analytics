@@ -19,8 +19,8 @@ RUN composer install \
 # ──────────────────────────────────────────────
 FROM php:8.3-cli-alpine AS node-build
 
-# Install pnpm via corepack
-RUN apk add --no-cache nodejs npm && corepack enable && corepack prepare pnpm@9 --activate
+# Install Node.js and pnpm
+RUN apk add --no-cache nodejs npm && npm install -g pnpm@9
 
 WORKDIR /app
 
