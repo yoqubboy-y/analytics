@@ -24,11 +24,17 @@ RUN cp .env.example .env \
     && php -r "file_put_contents('.env', str_replace('APP_KEY=', 'APP_KEY=base64:'.base64_encode(random_bytes(32)), file_get_contents('.env')));"
 
 RUN pnpm install --no-frozen-lockfile
-RUN DOCKER_BUILD=1 pnpm run build
+RUN NODE_OPTIONS="--max-old-space-size=512" DOCKER_BUILD=1 pnpm run build
 
 FROM php:8.3-fpm-alpine
 
-# Only 4 small extensions — no ICU, no GD, no LLVM, no OOM
+WORKDIR /app
+
+# Pull built assets FIRST — forces BuildKit to wait for node-build to finish
+# before starting extension compilation, preventing parallel stage OOM kill
+COPY --from=node-build /app/public/build ./public/build
+
+# MAKEFLAGS=-j1 caps GCC to one thread at a time, cutting peak memory ~4x
 RUN apk add --no-cache \
     nginx \
     supervisor \
@@ -37,14 +43,11 @@ RUN apk add --no-cache \
     unzip \
     libpq-dev \
     libzip-dev \
-    && docker-php-ext-install bcmath pdo_pgsql pcntl zip \
+    && MAKEFLAGS="-j1" docker-php-ext-install bcmath pdo_pgsql pcntl zip \
     && rm -rf /var/cache/apk/*
-
-WORKDIR /app
 
 COPY . .
 COPY --from=composer-build /app/vendor ./vendor
-COPY --from=node-build /app/public/build ./public/build
 
 RUN mkdir -p storage/framework/{sessions,views,cache} \
              storage/logs \
