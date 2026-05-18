@@ -30,24 +30,29 @@ export function DispatcherChart({ rows }: DispatcherChartProps) {
     const driverRows = useMemo(() => rows.filter((r) => !r.is_total && !r.missing_config), [rows]);
 
     const { data, config } = useMemo(() => {
-        const byDispatcher = new Map<string, { gross: number; pl: number; trucks: Set<string> }>();
+        const byDispatcher = new Map<string, { gross: number; pl: number; miles: number; days: number; trucks: Set<string> }>();
+        const periodDays = driverRows.reduce((max, r) => Math.max(max, r.days), 0);
 
         for (const row of driverRows) {
             const disp = row.dispatcher || 'Unassigned';
             if (!byDispatcher.has(disp)) {
-                byDispatcher.set(disp, { gross: 0, pl: 0, trucks: new Set() });
+                byDispatcher.set(disp, { gross: 0, pl: 0, miles: 0, days: 0, trucks: new Set() });
             }
             const entry = byDispatcher.get(disp)!;
             entry.gross += row.total_gross;
             entry.pl += row.profit_loss ?? 0;
+            entry.miles += row.total_miles;
+            entry.days += row.days;
             if (row.truck_number) entry.trucks.add(row.truck_number);
         }
 
         const sorted = Array.from(byDispatcher.entries())
-            .map(([name, { gross, pl, trucks }]) => {
+            .map(([name, { gross, pl, miles, days, trucks }]) => {
                 const truckCount = trucks.size || 1;
                 const key = name.toLowerCase().replace(/\s+/g, '_');
-                return { name, key, gross, pl, trucks: trucks.size, perTruckGross: gross / truckCount };
+                const rpm = miles > 0 ? gross / miles : 0;
+                const utilization = periodDays > 0 ? (days / (truckCount * periodDays)) * 100 : 0;
+                return { name, key, gross, pl, miles, rpm, days, utilization, trucks: trucks.size, perTruckGross: gross / truckCount };
             })
             .sort((a, b) => b.gross - a.gross);
 
@@ -56,6 +61,9 @@ export function DispatcherChart({ rows }: DispatcherChartProps) {
             value: mode === 'gross' ? d.gross : d.perTruckGross,
             fill: CHART_COLORS[i % CHART_COLORS.length],
             trucks: d.trucks,
+            miles: d.miles,
+            rpm: d.rpm,
+            utilization: d.utilization,
             fullName: d.name,
         }));
 
@@ -134,15 +142,27 @@ export function DispatcherChart({ rows }: DispatcherChartProps) {
                                     hideLabel
                                     formatter={(value, _name, item) => {
                                         const trucks = item.payload?.trucks as number | undefined;
+                                        const miles = item.payload?.miles as number | undefined;
+                                        const rpm = item.payload?.rpm as number | undefined;
+                                        const utilization = item.payload?.utilization as number | undefined;
                                         const full = item.payload?.fullName as string | undefined;
                                         const formatted = `$${Number(value).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
                                         return (
                                             <div className="flex flex-col gap-0.5">
                                                 <span className="font-medium">{full}</span>
-                                                <span>
-                                                    {formatted}
-                                                    {trucks != null && ` · ${trucks} truck${trucks !== 1 ? 's' : ''}`}
-                                                </span>
+                                                <span>{formatted}</span>
+                                                {trucks != null && (
+                                                    <span className="text-muted-foreground">{trucks} truck{trucks !== 1 ? 's' : ''}</span>
+                                                )}
+                                                {miles != null && (
+                                                    <span className="text-muted-foreground">{Math.round(miles).toLocaleString('en-US')} mi</span>
+                                                )}
+                                                {rpm != null && rpm > 0 && (
+                                                    <span className="text-muted-foreground">RPM ${rpm.toFixed(2)}</span>
+                                                )}
+                                                {utilization != null && utilization > 0 && (
+                                                    <span className="text-muted-foreground">Utilization {utilization.toFixed(1)}%</span>
+                                                )}
                                             </div>
                                         );
                                     }}
