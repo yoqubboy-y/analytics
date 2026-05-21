@@ -7,6 +7,7 @@ import {
 } from '@/components/analytics/pnl-table';
 import { KeyMetrics, type KeyMetricsData } from '@/components/analytics/key-metrics';
 import { DispatcherChart } from '@/components/analytics/dispatcher-chart';
+import { DispatcherRankings } from '@/components/analytics/dispatcher-rankings';
 import { WeekRangePicker } from '@/components/week-range-picker';
 
 type Props = {
@@ -50,8 +51,8 @@ export default function AnalyticsDashboard({
                 {/* Summary cards */}
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                     <KeyMetrics rows={rows} metrics={keyMetrics} />
-                    <DispatcherChart rows={rows} />
-                    <div className="rounded-xl border bg-card shadow-sm" />
+                    <DispatcherChart rows={rows} startDate={startDate} endDate={endDate} />
+                    <DispatcherRankings rows={rows} />
                 </div>
 
                 <PnlTable rows={rows} expenses={expenses} title="P&L Report" />

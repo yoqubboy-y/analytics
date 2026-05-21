@@ -12,6 +12,8 @@ import {
 
 interface DispatcherChartProps {
     rows: Row[];
+    startDate: string;
+    endDate: string;
 }
 
 type Mode = 'gross' | 'per_truck';
@@ -24,35 +26,64 @@ const CHART_COLORS = [
     'var(--chart-5)',
 ];
 
-export function DispatcherChart({ rows }: DispatcherChartProps) {
+export function DispatcherChart({ rows, startDate, endDate }: DispatcherChartProps) {
     const [mode, setMode] = useState<Mode>('gross');
 
-    const driverRows = useMemo(() => rows.filter((r) => !r.is_total && !r.missing_config), [rows]);
+    const driverRows = useMemo(() => rows.filter((r) => !r.is_total), [rows]);
+
+    const windowDays = useMemo(() => {
+        const start = Date.parse(startDate);
+        const end = Date.parse(endDate);
+        if (Number.isNaN(start) || Number.isNaN(end)) return 1;
+        return Math.max(1, Math.round((end - start) / 86_400_000) + 1);
+    }, [startDate, endDate]);
 
     const { data, config } = useMemo(() => {
-        const byDispatcher = new Map<string, { gross: number; pl: number; miles: number; days: number; trucks: Set<string> }>();
-        const periodDays = driverRows.reduce((max, r) => Math.max(max, r.days), 0);
+        type Bucket = {
+            gross: number;
+            pl: number;
+            miles: number;
+            productiveDays: number;
+            drivers: Set<number>;
+            trucks: Set<string>;
+        };
+        const byDispatcher = new Map<string, Bucket>();
 
         for (const row of driverRows) {
             const disp = row.dispatcher || 'Unassigned';
             if (!byDispatcher.has(disp)) {
-                byDispatcher.set(disp, { gross: 0, pl: 0, miles: 0, days: 0, trucks: new Set() });
+                byDispatcher.set(disp, { gross: 0, pl: 0, miles: 0, productiveDays: 0, drivers: new Set(), trucks: new Set() });
             }
             const entry = byDispatcher.get(disp)!;
             entry.gross += row.total_gross;
             entry.pl += row.profit_loss ?? 0;
             entry.miles += row.total_miles;
-            entry.days += row.days;
+            if (row.total_gross > 0) entry.productiveDays += row.days;
+            if (row.driver_id != null) entry.drivers.add(row.driver_id);
             if (row.truck_number) entry.trucks.add(row.truck_number);
         }
 
         const sorted = Array.from(byDispatcher.entries())
-            .map(([name, { gross, pl, miles, days, trucks }]) => {
-                const truckCount = trucks.size || 1;
+            .map(([name, { gross, pl, miles, productiveDays, drivers, trucks }]) => {
+                const driverCount = drivers.size;
+                const truckCount = trucks.size || driverCount || 1;
                 const key = name.toLowerCase().replace(/\s+/g, '_');
                 const rpm = miles > 0 ? gross / miles : 0;
-                const utilization = periodDays > 0 ? (days / (truckCount * periodDays)) * 100 : 0;
-                return { name, key, gross, pl, miles, rpm, days, utilization, trucks: trucks.size, perTruckGross: gross / truckCount };
+                const utilization = driverCount > 0
+                    ? (productiveDays / (driverCount * windowDays)) * 100
+                    : 0;
+                return {
+                    name,
+                    key,
+                    gross,
+                    pl,
+                    miles,
+                    rpm,
+                    utilization,
+                    drivers: driverCount,
+                    trucks: trucks.size,
+                    perTruckGross: gross / truckCount,
+                };
             })
             .sort((a, b) => b.gross - a.gross);
 
@@ -61,6 +92,7 @@ export function DispatcherChart({ rows }: DispatcherChartProps) {
             value: mode === 'gross' ? d.gross : d.perTruckGross,
             fill: CHART_COLORS[i % CHART_COLORS.length],
             trucks: d.trucks,
+            drivers: d.drivers,
             miles: d.miles,
             rpm: d.rpm,
             utilization: d.utilization,
@@ -141,6 +173,7 @@ export function DispatcherChart({ rows }: DispatcherChartProps) {
                                 <ChartTooltipContent
                                     hideLabel
                                     formatter={(value, _name, item) => {
+                                        const drivers = item.payload?.drivers as number | undefined;
                                         const trucks = item.payload?.trucks as number | undefined;
                                         const miles = item.payload?.miles as number | undefined;
                                         const rpm = item.payload?.rpm as number | undefined;
@@ -151,8 +184,8 @@ export function DispatcherChart({ rows }: DispatcherChartProps) {
                                             <div className="flex flex-col gap-0.5">
                                                 <span className="font-medium">{full}</span>
                                                 <span>{formatted}</span>
-                                                {trucks != null && (
-                                                    <span className="text-muted-foreground">{trucks} truck{trucks !== 1 ? 's' : ''}</span>
+                                                {drivers != null && (
+                                                    <span className="text-muted-foreground">{drivers} driver{drivers !== 1 ? 's' : ''}{trucks != null && trucks !== drivers ? ` · ${trucks} truck${trucks !== 1 ? 's' : ''}` : ''}</span>
                                                 )}
                                                 {miles != null && (
                                                     <span className="text-muted-foreground">{Math.round(miles).toLocaleString('en-US')} mi</span>

@@ -202,8 +202,6 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
         [rows],
     );
 
-    const totalRow = useMemo(() => rows.find((r) => r.is_total) ?? null, [rows]);
-
     const displayRows = useMemo(() => {
         let data = rows.filter((r) => !r.is_total);
         if (driverFilter) {
@@ -215,6 +213,34 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
         if (truckFilter.length > 0) data = data.filter((r) => truckFilter.some((o) => o.value === (r.truck_number ?? '')));
         return data;
     }, [rows, driverFilter, dispatcherFilter, typeFilter, truckFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const totalRow = useMemo<Row | null>(() => {
+        if (displayRows.length === 0) return null;
+        const configured = displayRows.filter((r) => !r.missing_config);
+        const totalGross = configured.reduce((s, r) => s + r.total_gross, 0);
+        const totalMiles = configured.reduce((s, r) => s + r.total_miles, 0);
+        const expenseSums: Record<string, number> = {};
+        for (const e of expenses) {
+            expenseSums[e.name] = configured.reduce((s, r) => s + (r.expenses[e.name] ?? 0), 0);
+        }
+        return {
+            driver_id: null,
+            driver_name: 'TOTAL',
+            dispatcher: '',
+            truck_number: '',
+            type: '',
+            days: displayRows.reduce((s, r) => s + r.days, 0),
+            total_gross: totalGross,
+            total_miles: totalMiles,
+            rpm: totalMiles > 0 ? totalGross / totalMiles : 0,
+            salary: configured.reduce((s, r) => s + (r.salary ?? 0), 0),
+            expenses: expenseSums,
+            total_expenses: Object.values(expenseSums).reduce((s, v) => s + v, 0),
+            profit_loss: configured.reduce((s, r) => s + (r.profit_loss ?? 0), 0),
+            missing_config: false,
+            is_total: true,
+        };
+    }, [displayRows, expenses]);
 
     const pageCount = Math.ceil(displayRows.length / pageSize);
     const pagedRows = useMemo(
@@ -419,6 +445,8 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
                         onExport={handleExport}
                         // visibility props
                         columns={allLeafColumns}
+                        columnVisibility={columnVisibility}
+                        setColumnVisibility={setColumnVisibility}
                         // filter props
                         driverFilter={driverFilter}
                         setDriverFilter={(v) => { setDriverFilter(v); setPage(1); }}
@@ -540,6 +568,8 @@ interface SettingsPopoverProps {
     activeFilterCount: number;
     onExport: () => void;
     columns: Column[];
+    columnVisibility: Record<string, boolean>;
+    setColumnVisibility: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
     driverFilter: string;
     setDriverFilter: (v: string) => void;
     dispatchers: string[];
@@ -558,6 +588,8 @@ function SettingsPopover({
     activeFilterCount,
     onExport,
     columns,
+    columnVisibility,
+    setColumnVisibility,
     driverFilter,
     setDriverFilter,
     dispatchers,
@@ -572,7 +604,7 @@ function SettingsPopover({
     clearFilters,
 }: SettingsPopoverProps) {
     const [view, setView] = useState<ViewKey>('main');
-    const visibleCount = columns.filter((c) => c.getIsVisible()).length;
+    const visibleCount = columns.filter((c) => columnVisibility[c.id] !== false).length;
     const totalCount = columns.length;
 
     return (
@@ -622,7 +654,12 @@ function SettingsPopover({
                 )}
 
                 {view === 'visibility' && (
-                    <VisibilityPanel columns={columns} onBack={() => setView('main')} />
+                    <VisibilityPanel
+                        columns={columns}
+                        columnVisibility={columnVisibility}
+                        setColumnVisibility={setColumnVisibility}
+                        onBack={() => setView('main')}
+                    />
                 )}
 
                 {view === 'filter' && (
@@ -690,34 +727,47 @@ function PanelHeader({ title, onBack, action }: { title: string; onBack: () => v
     );
 }
 
-function VisibilityPanel({ columns, onBack }: { columns: Column[]; onBack: () => void }) {
+function VisibilityPanel({
+    columns,
+    columnVisibility,
+    setColumnVisibility,
+    onBack,
+}: {
+    columns: Column[];
+    columnVisibility: Record<string, boolean>;
+    setColumnVisibility: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+    onBack: () => void;
+}) {
     const [search, setSearch] = useState('');
+
+    const getLabel = (col: Column) =>
+        typeof col.columnDef.header === 'string' ? col.columnDef.header : col.id;
+    const isVisible = (colId: string) => columnVisibility[colId] !== false;
+
+    const toggleColumn = (colId: string) => {
+        setColumnVisibility((prev) => ({ ...prev, [colId]: prev[colId] === false }));
+    };
+
+    const hideAll = () => {
+        setColumnVisibility(Object.fromEntries(columns.map((c) => [c.id, false])));
+    };
+
+    const showAll = () => {
+        setColumnVisibility({});
+    };
 
     const filtered = useMemo(() => {
         if (!search.trim()) return columns;
         const q = search.toLowerCase();
-        return columns.filter((c) => {
-            const label = typeof c.columnDef.header === 'string' ? c.columnDef.header : c.id;
-            return label.toLowerCase().includes(q);
-        });
-    }, [columns, search]);
+        return columns.filter((c) => getLabel(c).toLowerCase().includes(q));
+    }, [columns, search]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const anyVisible = columns.some((c) => c.getIsVisible());
+    const shown = filtered.filter((c) => isVisible(c.id));
+    const hidden = filtered.filter((c) => !isVisible(c.id));
 
     return (
         <div className="flex flex-col">
-            <PanelHeader
-                title="Property visibility"
-                onBack={onBack}
-                action={
-                    <button
-                        onClick={() => columns.forEach((c) => c.toggleVisibility(!anyVisible))}
-                        className="text-xs font-medium text-primary hover:underline"
-                    >
-                        {anyVisible ? 'Hide all' : 'Show all'}
-                    </button>
-                }
-            />
+            <PanelHeader title="Property visibility" onBack={onBack} />
             <div className="border-b p-2">
                 <div className="relative flex items-center">
                     <SearchIcon className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground" />
@@ -730,30 +780,96 @@ function VisibilityPanel({ columns, onBack }: { columns: Column[]; onBack: () =>
                     />
                 </div>
             </div>
-            <div className="max-h-80 overflow-y-auto py-1">
+            <div className="max-h-80 overflow-y-auto">
                 {filtered.length === 0 && (
                     <p className="px-3 py-4 text-center text-xs text-muted-foreground">No properties</p>
                 )}
-                {filtered.map((col) => {
-                    const label = typeof col.columnDef.header === 'string' ? col.columnDef.header : col.id;
-                    const visible = col.getIsVisible();
-                    return (
-                        <button
-                            key={col.id}
-                            onClick={() => col.toggleVisibility(!visible)}
-                            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent"
-                        >
-                            <span className="flex-1 text-left">{label}</span>
-                            {visible ? (
-                                <EyeIcon className="h-4 w-4 text-foreground" />
-                            ) : (
-                                <EyeOffIcon className="h-4 w-4 text-muted-foreground/60" />
-                            )}
-                        </button>
-                    );
-                })}
+
+                {shown.length > 0 && (
+                    <VisibilitySection
+                        title="Shown in table"
+                        action={
+                            <button onClick={hideAll} className="text-xs font-medium text-primary hover:underline">
+                                Hide all
+                            </button>
+                        }
+                    >
+                        {shown.map((col) => (
+                            <PropertyRow
+                                key={col.id}
+                                label={getLabel(col)}
+                                visible
+                                onToggle={() => toggleColumn(col.id)}
+                            />
+                        ))}
+                    </VisibilitySection>
+                )}
+
+                {hidden.length > 0 && (
+                    <VisibilitySection
+                        title="Hidden in table"
+                        action={
+                            <button onClick={showAll} className="text-xs font-medium text-primary hover:underline">
+                                Show all
+                            </button>
+                        }
+                    >
+                        {hidden.map((col) => (
+                            <PropertyRow
+                                key={col.id}
+                                label={getLabel(col)}
+                                visible={false}
+                                onToggle={() => toggleColumn(col.id)}
+                            />
+                        ))}
+                    </VisibilitySection>
+                )}
             </div>
         </div>
+    );
+}
+
+function VisibilitySection({
+    title,
+    action,
+    children,
+}: {
+    title: string;
+    action?: React.ReactNode;
+    children: React.ReactNode;
+}) {
+    return (
+        <div className="py-1">
+            <div className="flex items-center justify-between px-3 py-1.5">
+                <p className="text-xs font-medium text-muted-foreground">{title}</p>
+                {action}
+            </div>
+            {children}
+        </div>
+    );
+}
+
+function PropertyRow({
+    label,
+    visible,
+    onToggle,
+}: {
+    label: string;
+    visible: boolean;
+    onToggle: () => void;
+}) {
+    return (
+        <button
+            onClick={onToggle}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent"
+        >
+            <span className={cn('flex-1 truncate text-left', !visible && 'text-muted-foreground')}>{label}</span>
+            {visible ? (
+                <EyeIcon className="h-4 w-4 text-foreground" />
+            ) : (
+                <EyeOffIcon className="h-4 w-4 text-muted-foreground/60" />
+            )}
+        </button>
     );
 }
 
@@ -772,7 +888,7 @@ function FilterPanel({
     truckFilter,
     setTruckFilter,
     clearFilters,
-}: Omit<SettingsPopoverProps, 'columns' | 'onExport'> & { onBack: () => void }) {
+}: Omit<SettingsPopoverProps, 'columns' | 'onExport' | 'columnVisibility' | 'setColumnVisibility'> & { onBack: () => void }) {
     return (
         <div className="flex flex-col">
             <PanelHeader

@@ -71,6 +71,29 @@ class AnalyticsService
                       )
                   )
             ),
+            event_boards AS (
+                SELECT
+                    gb.primary_driver_id,
+                    gb.dispatcher_id,
+                    gb.start_date,
+                    gb.end_date
+                FROM gross_boards gb
+                WHERE gb.is_deleted = FALSE
+                  AND gb.object_type = 'EVENT'
+                  AND gb.company_id = :company_id
+                  AND (
+                      (
+                          gb.start_date >= :start_date
+                          AND gb.start_date <= :end_date
+                          AND (gb.end_date IS NULL OR gb.end_date <= :end_date_plus_one)
+                      )
+                      OR (
+                          gb.start_date >= :start_date_minus_seven
+                          AND gb.start_date < :start_date
+                          AND gb.end_date > :start_date
+                      )
+                  )
+            ),
             driver_days AS (
                 SELECT
                     wb.primary_driver_id AS driver_id,
@@ -100,6 +123,35 @@ class AnalyticsService
                     BOOL_OR(wb.secondary_driver_id IS NOT NULL) AS is_team
                 FROM week_boards wb
                 GROUP BY wb.primary_driver_id
+            ),
+            event_only_drivers AS (
+                SELECT
+                    eb.primary_driver_id AS driver_id,
+                    (
+                        SELECT eb2.dispatcher_id
+                        FROM event_boards eb2
+                        WHERE eb2.primary_driver_id = eb.primary_driver_id
+                          AND eb2.dispatcher_id IS NOT NULL
+                        GROUP BY eb2.dispatcher_id
+                        ORDER BY COUNT(*) DESC
+                        LIMIT 1
+                    ) AS dispatcher_id
+                FROM event_boards eb
+                WHERE eb.primary_driver_id NOT IN (SELECT driver_id FROM driver_totals)
+                GROUP BY eb.primary_driver_id
+            ),
+            event_only_days AS (
+                SELECT
+                    eb.primary_driver_id AS driver_id,
+                    COUNT(DISTINCT day::date) AS days_worked
+                FROM event_boards eb
+                JOIN event_only_drivers eod ON eod.driver_id = eb.primary_driver_id
+                CROSS JOIN LATERAL generate_series(
+                    GREATEST(eb.start_date, :start_date),
+                    LEAST(COALESCE(eb.end_date, :end_date), :end_date),
+                    '1 day'::interval
+                ) AS day
+                GROUP BY eb.primary_driver_id
             )
             SELECT
                 dt.driver_id,
@@ -118,6 +170,27 @@ class AnalyticsService
             LEFT JOIN dispatchers disp ON disp.id = dt.dispatcher_id AND disp.is_deleted = FALSE
             LEFT JOIN users disp_user ON disp_user.id = disp.user_id AND disp_user.is_deleted = FALSE
             LEFT JOIN driver_days dd ON dd.driver_id = dt.driver_id
+
+            UNION ALL
+
+            SELECT
+                eod.driver_id,
+                CONCAT(drv_user.first_name, ' ', drv_user.last_name) AS driver_name,
+                CONCAT(disp_user.first_name, ' ', disp_user.last_name) AS dispatcher,
+                t.truck_number,
+                COALESCE(edd.days_worked, 0) AS days,
+                0::numeric AS total_gross,
+                0::numeric AS total_miles,
+                FALSE AS is_team
+            FROM event_only_drivers eod
+            JOIN drivers d ON d.id = eod.driver_id AND d.is_deleted = FALSE
+            JOIN users drv_user ON drv_user.id = d.user_id AND drv_user.is_deleted = FALSE
+            JOIN company_users cu ON cu.user_id = drv_user.id AND cu.company_id = :company_id AND cu.is_deleted = FALSE
+            LEFT JOIN trucks t ON t.id = d.current_truck_id
+            LEFT JOIN dispatchers disp ON disp.id = eod.dispatcher_id AND disp.is_deleted = FALSE
+            LEFT JOIN users disp_user ON disp_user.id = disp.user_id AND disp_user.is_deleted = FALSE
+            LEFT JOIN event_only_days edd ON edd.driver_id = eod.driver_id
+
             ORDER BY dispatcher, driver_name
         SQL;
 
@@ -354,7 +427,7 @@ class AnalyticsService
         $byType = collect($events)->mapWithKeys(fn (object $r) => [$r->type => (float) $r->total_days]);
 
         // Driver counts via the analytics DB. Uses the same filters as the PnL
-        // table (LOAD/DRAFT boards overlapping the window) so totals match.
+        // table (LOAD/DRAFT/EVENT boards overlapping the window) so totals match.
         $driverCounts = DB::connection('analytics')->select(
             <<<'SQL'
                 WITH rolling_drivers AS (
@@ -367,7 +440,7 @@ class AnalyticsService
                         AND cu.is_deleted = FALSE
                     WHERE gb.is_deleted = FALSE
                       AND gb.company_id = :company_id
-                      AND gb.object_type::text IN ('LOAD', 'DRAFT')
+                      AND gb.object_type::text IN ('LOAD', 'DRAFT', 'EVENT')
                       AND (
                           (
                               gb.start_date >= :start_date::timestamp

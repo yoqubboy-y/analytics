@@ -30,7 +30,7 @@ interface KeyMetricsProps {
 
 export function KeyMetrics({ rows, metrics }: KeyMetricsProps) {
     const totalRow = useMemo(() => rows.find((r) => r.is_total) ?? null, [rows]);
-    const driverRows = useMemo(() => rows.filter((r) => !r.is_total && !r.missing_config), [rows]);
+    const driverRows = useMemo(() => rows.filter((r) => !r.is_total && !r.missing_config && r.total_gross > 0), [rows]);
 
     const gross = totalRow?.total_gross ?? 0;
     const miles = totalRow?.total_miles ?? 0;
