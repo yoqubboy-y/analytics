@@ -40,6 +40,7 @@ class ConfigurationController extends Controller
                     'calculation_type' => $e->calculation_type->value,
                     'rate' => $e->rate,
                     'applies_to' => $e->applies_to,
+                    'skip_when_no_gross' => $e->skip_when_no_gross,
                     'sort_order' => $e->sort_order,
                 ])->values(),
             'contractTypes' => array_map(fn ($c) => [
@@ -87,6 +88,7 @@ class ConfigurationController extends Controller
             'rate' => ['required', 'numeric', 'min:0'],
             'applies_to' => ['nullable', 'array'],
             'applies_to.*' => [Rule::enum(DriverContractType::class)],
+            'skip_when_no_gross' => ['boolean'],
             'sort_order' => ['integer', 'min:0'],
         ]);
 
@@ -104,6 +106,7 @@ class ConfigurationController extends Controller
             'rate' => ['required', 'numeric', 'min:0'],
             'applies_to' => ['nullable', 'array'],
             'applies_to.*' => [Rule::enum(DriverContractType::class)],
+            'skip_when_no_gross' => ['boolean'],
             'sort_order' => ['integer', 'min:0'],
         ]);
 

@@ -247,7 +247,7 @@ class AnalyticsService
         /** @var array<string, float> $computedExpenses */
         $computedExpenses = [];
         foreach ($expenses as $expense) {
-            if ($expense->appliesToContractType($contractType)) {
+            if ($expense->appliesToDriver($contractType, $gross)) {
                 $computedExpenses[$expense->name] = $expense->calculate($gross, $miles);
             }
         }
@@ -304,7 +304,8 @@ class AnalyticsService
      * @return array<string, mixed>
      */
     private function computeTotals(Collection $rows, Collection $expenses): array
-    {        $configured = $rows->where('missing_config', false);
+    {
+        $configured = $rows->where('missing_config', false);
         $totalMiles = $configured->sum('total_miles');
         $totalGross = $configured->sum('total_gross');
 

@@ -98,7 +98,7 @@ export function KeyMetrics({ rows, metrics }: KeyMetricsProps) {
             </div>
 
             {/* Compound Utilization Rate — collapsible with event breakdown inside */}
-            <Collapsible defaultOpen className="rounded-lg border bg-muted/30">
+            <Collapsible className="rounded-lg border bg-muted/30">
                 <CollapsibleTrigger className="group flex w-full items-center justify-between px-3 py-2 text-sm">
                     <span className="font-medium">Compound Utilization Rate</span>
                     <div className="flex items-center gap-2">

@@ -1,5 +1,5 @@
 import { Head, router, usePage } from '@inertiajs/react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import {
     destroyExpense,
     index as configurationIndex,
@@ -43,6 +43,7 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Checkbox } from '@/components/ui/checkbox';
 import { ReceiptText } from 'lucide-react';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 
@@ -64,6 +65,7 @@ type TeamExpense = {
     calculation_type: string;
     rate: number;
     applies_to: string[] | null;
+    skip_when_no_gross: boolean;
     sort_order: number;
 };
 
@@ -74,12 +76,42 @@ type Props = {
     calculationTypes: CalculationType[];
 };
 
+function SkipNoGrossCheckbox({
+    checked,
+    onChange,
+}: {
+    checked: boolean;
+    onChange: (v: boolean) => void;
+}) {
+    const id = useId();
+    return (
+        <div className="relative flex w-full items-start gap-2 rounded-md border border-input p-3 shadow-xs outline-none has-data-[state=checked]:border-primary/50">
+            <div className="grid grow gap-1">
+                <Label htmlFor={id} className="cursor-pointer">
+                    Skip when driver has $0 gross
+                </Label>
+                <p className="text-xs text-muted-foreground" id={`${id}-description`}>
+                    Don't charge this expense to drivers who didn't run any loads that week.
+                </p>
+            </div>
+            <Checkbox
+                id={id}
+                aria-describedby={`${id}-description`}
+                className="order-1 after:absolute after:inset-0"
+                checked={checked}
+                onCheckedChange={(v) => onChange(v === true)}
+            />
+        </div>
+    );
+}
+
 const emptyExpense = {
     name: '',
     description: '',
     calculation_type: 'flat',
     rate: '',
     applies_to: [] as string[],
+    skip_when_no_gross: false,
     sort_order: 0,
 };
 
@@ -167,6 +199,7 @@ export default function Configuration({
                     newExpense.applies_to.length > 0
                         ? newExpense.applies_to
                         : null,
+                skip_when_no_gross: newExpense.skip_when_no_gross,
             },
             {
                 onSuccess: () => {
@@ -191,6 +224,7 @@ export default function Configuration({
                     editingExpense.applies_to.length > 0
                         ? editingExpense.applies_to
                         : null,
+                skip_when_no_gross: editingExpense.skip_when_no_gross,
                 sort_order: editingExpense.sort_order,
             },
             { onSuccess: () => setEditingExpense(null) },
@@ -671,6 +705,17 @@ export default function Configuration({
                                                     ))}
                                                 </ToggleGroup>
                                             </div>
+                                            <div className="sm:col-span-2">
+                                                <SkipNoGrossCheckbox
+                                                    checked={newExpense.skip_when_no_gross}
+                                                    onChange={(v) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            skip_when_no_gross: v,
+                                                        })
+                                                    }
+                                                />
+                                            </div>
                                         </div>
                                     </form>
                                     <DialogFooter>
@@ -881,26 +926,40 @@ export default function Configuration({
                                                                         ? 'All contract types'
                                                                         : 'Selected only'}
                                                                 </span>
+                                                                <label className="mt-1 flex cursor-pointer items-start gap-2 text-xs font-normal">
+                                                                    <Checkbox
+                                                                        checked={editingExpense.skip_when_no_gross}
+                                                                        onCheckedChange={(v) =>
+                                                                            setEditingExpense({
+                                                                                ...editingExpense,
+                                                                                skip_when_no_gross: v === true,
+                                                                            })
+                                                                        }
+                                                                        className="mt-0.5"
+                                                                    />
+                                                                    <span>Skip when driver has $0 gross</span>
+                                                                </label>
                                                             </div>
-                                                        ) : exp.applies_to &&
-                                                          exp.applies_to
-                                                              .length > 0 ? (
-                                                            exp.applies_to
-                                                                .map(
-                                                                    (v) =>
-                                                                        contractTypes.find(
-                                                                            (
-                                                                                ct,
-                                                                            ) =>
-                                                                                ct.value ===
-                                                                                v,
-                                                                        )
-                                                                            ?.label ??
-                                                                        v,
-                                                                )
-                                                                .join(', ')
                                                         ) : (
-                                                            'All'
+                                                            <span className="flex flex-col gap-0.5">
+                                                                <span>
+                                                                    {exp.applies_to && exp.applies_to.length > 0
+                                                                        ? exp.applies_to
+                                                                              .map(
+                                                                                  (v) =>
+                                                                                      contractTypes.find(
+                                                                                          (ct) => ct.value === v,
+                                                                                      )?.label ?? v,
+                                                                              )
+                                                                              .join(', ')
+                                                                        : 'All'}
+                                                                </span>
+                                                                {exp.skip_when_no_gross && (
+                                                                    <span className="text-xs text-amber-600 dark:text-amber-500">
+                                                                        Skips drivers with $0 gross
+                                                                    </span>
+                                                                )}
+                                                            </span>
                                                         )}
                                                     </TableCell>
                                                     <TableCell className="text-right">

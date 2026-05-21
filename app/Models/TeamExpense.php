@@ -17,6 +17,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'calculation_type',
     'rate',
     'applies_to',
+    'skip_when_no_gross',
     'sort_order',
 ])]
 class TeamExpense extends Model
@@ -35,6 +36,7 @@ class TeamExpense extends Model
             'calculation_type' => ExpenseCalculationType::class,
             'rate' => 'float',
             'applies_to' => 'array', // array<string> of DriverContractType values, or null for all
+            'skip_when_no_gross' => 'boolean',
             'sort_order' => 'integer',
         ];
     }
@@ -59,6 +61,20 @@ class TeamExpense extends Model
         }
 
         return in_array($type->value, $this->applies_to, strict: true);
+    }
+
+    /**
+     * Determine whether this expense applies to a driver given their contract
+     * type and weekly gross. Expenses flagged with `skip_when_no_gross` are
+     * suppressed for drivers who did no loads (gross = 0) in the period.
+     */
+    public function appliesToDriver(DriverContractType $type, float $gross): bool
+    {
+        if ($this->skip_when_no_gross && $gross <= 0) {
+            return false;
+        }
+
+        return $this->appliesToContractType($type);
     }
 
     /**

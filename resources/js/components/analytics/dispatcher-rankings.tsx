@@ -1,12 +1,29 @@
 import { useMemo, useState } from 'react';
+import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { type Row } from './pnl-table';
 
-type Metric = 'net' | 'gross' | 'rpm';
+type SortKey = 'total_net' | 'avg_net' | 'total_gross' | 'avg_gross' | 'rpm';
+type Direction = 'asc' | 'desc';
 
 interface DispatcherRankingsProps {
     rows: Row[];
 }
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+    { value: 'total_net', label: 'Total Net' },
+    { value: 'avg_net', label: 'Avg Net / Truck' },
+    { value: 'total_gross', label: 'Total Gross' },
+    { value: 'avg_gross', label: 'Avg Gross / Truck' },
+    { value: 'rpm', label: 'RPM' },
+];
 
 const fmtCurrency = (n: number) =>
     `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -15,7 +32,8 @@ const fmtRpm = (n: number) =>
     `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export function DispatcherRankings({ rows }: DispatcherRankingsProps) {
-    const [metric, setMetric] = useState<Metric>('net');
+    const [sortBy, setSortBy] = useState<SortKey>('total_net');
+    const [direction, setDirection] = useState<Direction>('desc');
 
     const ranked = useMemo(() => {
         type Bucket = {
@@ -28,7 +46,7 @@ export function DispatcherRankings({ rows }: DispatcherRankingsProps) {
         const byDispatcher = new Map<string, Bucket>();
 
         for (const row of rows) {
-            if (row.is_total || row.missing_config || row.total_gross <= 0) continue;
+            if (row.is_total || row.missing_config) continue;
             const disp = row.dispatcher || 'Unassigned';
             if (!byDispatcher.has(disp)) {
                 byDispatcher.set(disp, { pl: 0, gross: 0, miles: 0, trucks: new Set(), drivers: new Set() });
@@ -46,36 +64,67 @@ export function DispatcherRankings({ rows }: DispatcherRankingsProps) {
             return {
                 name,
                 trucks: b.trucks.size || b.drivers.size,
+                totalNet: b.pl,
+                totalGross: b.gross,
                 avgNet: b.pl / truckCount,
                 avgGross: b.gross / truckCount,
                 rpm: b.miles > 0 ? b.gross / b.miles : 0,
             };
         });
 
-        const sorter: Record<Metric, (a: (typeof list)[number], b: (typeof list)[number]) => number> = {
-            net: (a, b) => b.avgNet - a.avgNet,
-            gross: (a, b) => b.avgGross - a.avgGross,
-            rpm: (a, b) => b.rpm - a.rpm,
+        const valueOf = (item: (typeof list)[number]) => {
+            switch (sortBy) {
+                case 'total_net':
+                    return item.totalNet;
+                case 'avg_net':
+                    return item.avgNet;
+                case 'total_gross':
+                    return item.totalGross;
+                case 'avg_gross':
+                    return item.avgGross;
+                case 'rpm':
+                    return item.rpm;
+            }
         };
-        return list.sort(sorter[metric]);
-    }, [rows, metric]);
+
+        return list.sort((a, b) => {
+            const av = valueOf(a);
+            const bv = valueOf(b);
+            return direction === 'desc' ? bv - av : av - bv;
+        });
+    }, [rows, sortBy, direction]);
 
     return (
         <div className="flex flex-col gap-2 rounded-xl border bg-card p-4 shadow-sm">
-            <div className="mb-1 flex items-center justify-between">
+            <div className="mb-1 flex items-center justify-between gap-2">
                 <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
                     Dispatcher Rankings
                 </p>
-                <div className="flex overflow-hidden rounded-md border text-xs font-medium">
-                    <SortButton active={metric === 'net'} onClick={() => setMetric('net')}>
-                        Net
-                    </SortButton>
-                    <SortButton active={metric === 'gross'} onClick={() => setMetric('gross')} border>
-                        Gross
-                    </SortButton>
-                    <SortButton active={metric === 'rpm'} onClick={() => setMetric('rpm')} border>
-                        RPM
-                    </SortButton>
+                <div className="flex items-center gap-1">
+                    <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortKey)}>
+                        <SelectTrigger className="h-7 w-auto gap-1.5 text-xs">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent align="end">
+                            {SORT_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                                    {opt.label}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <button
+                        onClick={() => setDirection((d) => (d === 'desc' ? 'asc' : 'desc'))}
+                        className="flex h-7 w-7 items-center justify-center rounded-md border text-muted-foreground transition-colors hover:bg-accent"
+                        aria-label={direction === 'desc' ? 'Sort descending' : 'Sort ascending'}
+                        title={direction === 'desc' ? 'Descending' : 'Ascending'}
+                    >
+                        {direction === 'desc' ? (
+                            <ArrowDownIcon className="h-3.5 w-3.5" />
+                        ) : (
+                            <ArrowUpIcon className="h-3.5 w-3.5" />
+                        )}
+                    </button>
                 </div>
             </div>
 
@@ -86,7 +135,7 @@ export function DispatcherRankings({ rows }: DispatcherRankingsProps) {
             ) : (
                 <div className="flex flex-col gap-1.5 overflow-y-auto pr-1" style={{ maxHeight: 320 }}>
                     {ranked.map((d, idx) => (
-                        <RankRow key={d.name} rank={idx + 1} dispatcher={d} metric={metric} />
+                        <RankRow key={d.name} rank={idx + 1} dispatcher={d} sortBy={sortBy} />
                     ))}
                 </div>
             )}
@@ -94,72 +143,84 @@ export function DispatcherRankings({ rows }: DispatcherRankingsProps) {
     );
 }
 
-function SortButton({
-    active,
-    onClick,
-    border,
-    children,
-}: {
-    active: boolean;
-    onClick: () => void;
-    border?: boolean;
-    children: React.ReactNode;
-}) {
-    return (
-        <button
-            onClick={onClick}
-            className={cn(
-                'px-3 py-1.5 transition-colors',
-                border && 'border-l',
-                active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent',
-            )}
-        >
-            {children}
-        </button>
-    );
-}
-
 interface Ranked {
     name: string;
     trucks: number;
+    totalNet: number;
+    totalGross: number;
     avgNet: number;
     avgGross: number;
     rpm: number;
 }
 
-function RankRow({ rank, dispatcher: d, metric }: { rank: number; dispatcher: Ranked; metric: Metric }) {
-    const primary =
-        metric === 'net' ? fmtCurrency(d.avgNet) : metric === 'gross' ? fmtCurrency(d.avgGross) : fmtRpm(d.rpm);
+function RankRow({ rank, dispatcher: d, sortBy }: { rank: number; dispatcher: Ranked; sortBy: SortKey }) {
+    const isNetFamily = sortBy === 'total_net' || sortBy === 'avg_net';
+    const isGrossFamily = sortBy === 'total_gross' || sortBy === 'avg_gross';
 
-    const primaryTone =
-        metric === 'net'
-            ? d.avgNet >= 0
-                ? 'text-emerald-500'
-                : 'text-red-500'
-            : 'text-emerald-500';
+    let primaryValue: number;
+    let primary: string;
+    let subValue: string | null = null;
+
+    switch (sortBy) {
+        case 'total_net':
+            primaryValue = d.totalNet;
+            primary = fmtCurrency(d.totalNet);
+            subValue = `${fmtCurrency(d.avgNet)} Avg Net / Truck`;
+            break;
+        case 'avg_net':
+            primaryValue = d.avgNet;
+            primary = fmtCurrency(d.avgNet);
+            subValue = `${fmtCurrency(d.totalNet)} Total Net`;
+            break;
+        case 'total_gross':
+            primaryValue = d.totalGross;
+            primary = fmtCurrency(d.totalGross);
+            subValue = `${fmtCurrency(d.avgGross)} Avg Gross / Truck`;
+            break;
+        case 'avg_gross':
+            primaryValue = d.avgGross;
+            primary = fmtCurrency(d.avgGross);
+            subValue = `${fmtCurrency(d.totalGross)} Total Gross`;
+            break;
+        case 'rpm':
+            primaryValue = d.rpm;
+            primary = fmtRpm(d.rpm);
+            break;
+    }
+
+    const primaryTone = isNetFamily
+        ? primaryValue >= 0
+            ? 'text-emerald-500'
+            : 'text-red-500'
+        : 'text-emerald-500';
+
+    const subTone = sortBy === 'rpm' ? 'text-muted-foreground' : 'text-sky-500';
 
     return (
         <div className="rounded-lg border bg-muted/30 px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-start justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                     <span className="shrink-0 text-xs font-semibold text-muted-foreground tabular-nums">
                         {rank}.
                     </span>
                     <p className="truncate text-sm font-medium">{d.name}</p>
                 </div>
-                <p className={cn('shrink-0 text-sm font-bold tabular-nums', primaryTone)}>{primary}</p>
+                <div className="flex shrink-0 flex-col items-end">
+                    <p className={cn('text-sm font-bold tabular-nums', primaryTone)}>{primary}</p>
+                    {subValue && <p className={cn('text-xs tabular-nums', subTone)}>{subValue}</p>}
+                </div>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground tabular-nums">
                 <span>
                     {d.trucks} truck{d.trucks !== 1 ? 's' : ''}
                 </span>
-                {metric !== 'net' && (
+                {!isNetFamily && (
                     <span>
-                        Net <span className={d.avgNet >= 0 ? 'text-emerald-500' : 'text-red-500'}>{fmtCurrency(d.avgNet)}</span>
+                        Net <span className={d.totalNet >= 0 ? 'text-emerald-500' : 'text-red-500'}>{fmtCurrency(d.totalNet)}</span>
                     </span>
                 )}
-                {metric !== 'gross' && <span>Gross {fmtCurrency(d.avgGross)}</span>}
-                {metric !== 'rpm' && <span>RPM {fmtRpm(d.rpm)}</span>}
+                {!isGrossFamily && <span>Gross {fmtCurrency(d.totalGross)}</span>}
+                {sortBy !== 'rpm' && <span>RPM {fmtRpm(d.rpm)}</span>}
             </div>
         </div>
     );
