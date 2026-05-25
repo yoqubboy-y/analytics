@@ -7,6 +7,7 @@ enum TeamRole: string
     case Owner = 'owner';
     case Admin = 'admin';
     case Member = 'member';
+    case Viewer = 'viewer';
 
     /**
      * Get the display label for the role.
@@ -27,10 +28,13 @@ enum TeamRole: string
             self::Owner => TeamPermission::cases(),
             self::Admin => [
                 TeamPermission::UpdateTeam,
+                TeamPermission::AddMember,
+                TeamPermission::UpdateMember,
+                TeamPermission::RemoveMember,
                 TeamPermission::CreateInvitation,
                 TeamPermission::CancelInvitation,
             ],
-            self::Member => [],
+            self::Member, self::Viewer => [],
         };
     }
 
@@ -52,6 +56,7 @@ enum TeamRole: string
             self::Owner => 3,
             self::Admin => 2,
             self::Member => 1,
+            self::Viewer => 0,
         };
     }
 

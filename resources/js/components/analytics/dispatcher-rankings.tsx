@@ -1,5 +1,5 @@
 import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
     Select,
     SelectContent,
@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import type { Row } from './pnl-table';
+import { WidgetDownloadButton } from './widget-download-button';
 
 type SortKey = 'total_net' | 'avg_net' | 'total_gross' | 'avg_gross' | 'rpm';
 type Direction = 'asc' | 'desc';
@@ -17,6 +18,8 @@ interface DispatcherRankingsProps {
     rows: Row[];
     /** Whole weeks in the window; per-truck averages are divided by this. */
     weeks: number;
+    /** Show the PNG download control (hidden for viewers). */
+    canDownload?: boolean;
 }
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
@@ -33,7 +36,12 @@ const fmtCurrency = (n: number) =>
 const fmtRpm = (n: number) =>
     `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function DispatcherRankings({ rows, weeks }: DispatcherRankingsProps) {
+export function DispatcherRankings({
+    rows,
+    weeks,
+    canDownload = false,
+}: DispatcherRankingsProps) {
+    const cardRef = useRef<HTMLDivElement>(null);
     const [sortBy, setSortBy] = useState<SortKey>('total_net');
     const [direction, setDirection] = useState<Direction>('desc');
 
@@ -116,12 +124,21 @@ export function DispatcherRankings({ rows, weeks }: DispatcherRankingsProps) {
     }, [rows, sortBy, direction, weeks]);
 
     return (
-        <div className="flex flex-col gap-2 rounded-xl border bg-card p-4 shadow-sm">
+        <div
+            ref={cardRef}
+            className="flex flex-col gap-2 rounded-xl border bg-card p-4 shadow-sm"
+        >
             <div className="mb-1 flex items-center justify-between gap-2">
                 <p className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
                     Dispatcher Rankings
                 </p>
                 <div className="flex items-center gap-1">
+                    {canDownload && (
+                        <WidgetDownloadButton
+                            targetRef={cardRef}
+                            filename="dispatcher-rankings"
+                        />
+                    )}
                     <Select
                         value={sortBy}
                         onValueChange={(v) => setSortBy(v as SortKey)}

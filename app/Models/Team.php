@@ -102,6 +102,16 @@ class Team extends Model
     }
 
     /**
+     * Get all shareable dashboard links for this team.
+     *
+     * @return HasMany<DashboardShare, $this>
+     */
+    public function dashboardShares(): HasMany
+    {
+        return $this->hasMany(DashboardShare::class);
+    }
+
+    /**
      * Get the attributes that should be cast.
      *
      * @return array<string, string>

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Bar, BarChart, XAxis, YAxis } from 'recharts';
+import { useMemo, useRef, useState } from 'react';
+import { Bar, BarChart, LabelList, XAxis, YAxis } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
     ChartContainer,
@@ -9,11 +9,14 @@ import {
 import type { ChartConfig } from '@/components/ui/chart';
 import { cn } from '@/lib/utils';
 import type { Row } from './pnl-table';
+import { WidgetDownloadButton } from './widget-download-button';
 
 interface DispatcherChartProps {
     rows: Row[];
     startDate: string;
     endDate: string;
+    /** Show the PNG download control (hidden for viewers). */
+    canDownload?: boolean;
 }
 
 type Mode = 'gross' | 'per_truck';
@@ -26,11 +29,33 @@ const CHART_COLORS = [
     'var(--chart-5)',
 ];
 
+/** Compact currency for bar labels: $7k, $730k, $1.3M. */
+function compactCurrency(value: number): string {
+    const sign = value < 0 ? '-' : '';
+    const abs = Math.abs(value);
+
+    if (abs >= 1_000_000) {
+        const m = abs / 1_000_000;
+
+        return `${sign}$${m >= 10 ? Math.round(m) : m.toFixed(1).replace(/\.0$/, '')}M`;
+    }
+
+    if (abs >= 1_000) {
+        const k = abs / 1_000;
+
+        return `${sign}$${k >= 10 ? Math.round(k) : k.toFixed(1).replace(/\.0$/, '')}k`;
+    }
+
+    return `${sign}$${Math.round(abs)}`;
+}
+
 export function DispatcherChart({
     rows,
     startDate,
     endDate,
+    canDownload = false,
 }: DispatcherChartProps) {
+    const cardRef = useRef<HTMLDivElement>(null);
     const [mode, setMode] = useState<Mode>('gross');
 
     const driverRows = useMemo(() => rows.filter((r) => !r.is_total), [rows]);
@@ -153,35 +178,43 @@ export function DispatcherChart({
     }, [driverRows, mode, windowDays, weeks]);
 
     return (
-        <Card className="flex flex-col">
+        <Card ref={cardRef} className="flex flex-col">
             <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                     <CardTitle className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
                         Dispatcher Performance
                     </CardTitle>
-                    <div className="flex overflow-hidden rounded-md border text-xs font-medium">
-                        <button
-                            onClick={() => setMode('gross')}
-                            className={cn(
-                                'px-3 py-1.5 transition-colors',
-                                mode === 'gross'
-                                    ? 'bg-primary text-primary-foreground'
-                                    : 'text-muted-foreground hover:bg-accent',
-                            )}
-                        >
-                            Gross
-                        </button>
-                        <button
-                            onClick={() => setMode('per_truck')}
-                            className={cn(
-                                'border-l px-3 py-1.5 transition-colors',
-                                mode === 'per_truck'
-                                    ? 'bg-primary text-primary-foreground'
-                                    : 'text-muted-foreground hover:bg-accent',
-                            )}
-                        >
-                            Per Truck/wk
-                        </button>
+                    <div className="flex items-center gap-1">
+                        {canDownload && (
+                            <WidgetDownloadButton
+                                targetRef={cardRef}
+                                filename="dispatcher-performance"
+                            />
+                        )}
+                        <div className="flex overflow-hidden rounded-md border text-xs font-medium">
+                            <button
+                                onClick={() => setMode('gross')}
+                                className={cn(
+                                    'px-3 py-1.5 transition-colors',
+                                    mode === 'gross'
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'text-muted-foreground hover:bg-accent',
+                                )}
+                            >
+                                Gross
+                            </button>
+                            <button
+                                onClick={() => setMode('per_truck')}
+                                className={cn(
+                                    'border-l px-3 py-1.5 transition-colors',
+                                    mode === 'per_truck'
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'text-muted-foreground hover:bg-accent',
+                                )}
+                            >
+                                Per Truck/wk
+                            </button>
+                        </div>
                     </div>
                 </div>
             </CardHeader>
@@ -194,7 +227,7 @@ export function DispatcherChart({
                         accessibilityLayer
                         data={data}
                         barCategoryGap="8%"
-                        margin={{ left: 4, right: 4, bottom: 44 }}
+                        margin={{ top: 20, left: 4, right: 4, bottom: 44 }}
                     >
                         <XAxis
                             dataKey="dispatcher"
@@ -286,7 +319,18 @@ export function DispatcherChart({
                                 />
                             }
                         />
-                        <Bar dataKey="value" radius={5} maxBarSize={9999} />
+                        <Bar dataKey="value" radius={5} maxBarSize={9999}>
+                            <LabelList
+                                dataKey="value"
+                                position="top"
+                                offset={8}
+                                className="fill-foreground"
+                                fontSize={11}
+                                formatter={(value) =>
+                                    compactCurrency(Number(value))
+                                }
+                            />
+                        </Bar>
                     </BarChart>
                 </ChartContainer>
             </CardContent>

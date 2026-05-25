@@ -3,7 +3,7 @@ import {
     TrendingDownIcon,
     TrendingUpIcon,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
     Collapsible,
     CollapsibleContent,
@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import type { Row } from './pnl-table';
+import { WidgetDownloadButton } from './widget-download-button';
 
 const fmtCurrency = (n: number) =>
     `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -40,9 +41,17 @@ interface KeyMetricsProps {
     metrics: KeyMetricsData;
     /** Whole weeks in the window; per-truck averages are divided by this. */
     weeks: number;
+    /** Show the PNG download control (hidden for viewers). */
+    canDownload?: boolean;
 }
 
-export function KeyMetrics({ rows, metrics, weeks }: KeyMetricsProps) {
+export function KeyMetrics({
+    rows,
+    metrics,
+    weeks,
+    canDownload = false,
+}: KeyMetricsProps) {
+    const cardRef = useRef<HTMLDivElement>(null);
     const totalRow = useMemo(
         () => rows.find((r) => r.is_total) ?? null,
         [rows],
@@ -92,10 +101,21 @@ export function KeyMetrics({ rows, metrics, weeks }: KeyMetricsProps) {
     } = metrics;
 
     return (
-        <div className="flex flex-col gap-2 rounded-xl border bg-card p-4 shadow-sm">
-            <p className="mb-1 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-                Key Metrics
-            </p>
+        <div
+            ref={cardRef}
+            className="flex flex-col gap-2 rounded-xl border bg-card p-4 shadow-sm"
+        >
+            <div className="mb-1 flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
+                    Key Metrics
+                </p>
+                {canDownload && (
+                    <WidgetDownloadButton
+                        targetRef={cardRef}
+                        filename="key-metrics"
+                    />
+                )}
+            </div>
 
             {/* Drivers */}
             <div className="rounded-lg border bg-muted/30 px-3 py-2">

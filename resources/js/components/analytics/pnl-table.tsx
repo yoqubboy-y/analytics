@@ -1,13 +1,13 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import type React from 'react';
 import {
-    type ColumnDef,
-    type ColumnSizingState,
-    type SortingState,
     flexRender,
     getCoreRowModel,
     getSortedRowModel,
     useReactTable,
+} from '@tanstack/react-table';
+import type {
+    ColumnDef,
+    ColumnSizingState,
+    SortingState,
 } from '@tanstack/react-table';
 import {
     ArrowDownIcon,
@@ -19,10 +19,16 @@ import {
     EyeIcon,
     EyeOffIcon,
     FilterIcon,
+    ImageIcon,
     SearchIcon,
     Settings2Icon,
     XIcon,
 } from 'lucide-react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import type React from 'react';
+import * as XLSX from 'xlsx';
+import MultipleSelector from '@/components/ui/multiselect';
+import type { Option } from '@/components/ui/multiselect';
 import {
     Pagination,
     PaginationContent,
@@ -42,8 +48,6 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import MultipleSelector, { type Option } from '@/components/ui/multiselect';
-import * as XLSX from 'xlsx';
 import {
     Table,
     TableBody,
@@ -52,6 +56,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { downloadElementAsPng } from '@/lib/download';
 import { cn } from '@/lib/utils';
 
 export type Row = {
@@ -117,13 +122,22 @@ function ColHead({
             e.preventDefault();
             dragging.current = true;
             startX.current = e.clientX;
-            startSize.current = thRef.current ? thRef.current.offsetWidth : size;
+            startSize.current = thRef.current
+                ? thRef.current.offsetWidth
+                : size;
             currentSize.current = startSize.current;
 
             function onMove(ev: MouseEvent) {
-                if (!dragging.current) return;
-                const next = Math.max(60, startSize.current + ev.clientX - startX.current);
+                if (!dragging.current) {
+                    return;
+                }
+
+                const next = Math.max(
+                    60,
+                    startSize.current + ev.clientX - startX.current,
+                );
                 currentSize.current = next;
+
                 if (thRef.current) {
                     thRef.current.style.width = `${next}px`;
                     thRef.current.style.minWidth = `${next}px`;
@@ -145,28 +159,30 @@ function ColHead({
         <TableHead
             ref={thRef}
             style={{ width: size, minWidth: size, position: 'relative' }}
-            className="group select-none px-2 py-2 text-xs whitespace-nowrap"
+            className="group px-2 py-2 text-xs whitespace-nowrap select-none"
         >
             <div className="flex items-center gap-0.5">
                 <span
-                    className={cn('flex items-center gap-0.5 truncate', canSort && 'cursor-pointer')}
+                    className={cn(
+                        'flex items-center gap-0.5 truncate',
+                        canSort && 'cursor-pointer',
+                    )}
                     onClick={canSort ? onSort : undefined}
                 >
                     {children}
-                    {canSort && (
-                        isSorted === 'asc' ? (
+                    {canSort &&
+                        (isSorted === 'asc' ? (
                             <ArrowUpIcon className="h-3 w-3 shrink-0" />
                         ) : isSorted === 'desc' ? (
                             <ArrowDownIcon className="h-3 w-3 shrink-0" />
                         ) : (
                             <ChevronsUpDownIcon className="h-3 w-3 shrink-0 opacity-30" />
-                        )
-                    )}
+                        ))}
                 </span>
             </div>
             <div
                 onMouseDown={onResizeMouseDown}
-                className="absolute top-0 right-0 z-10 h-full w-1 cursor-col-resize opacity-0 hover:bg-border group-hover:opacity-100"
+                className="absolute top-0 right-0 z-10 h-full w-1 cursor-col-resize opacity-0 group-hover:opacity-100 hover:bg-border"
             />
         </TableHead>
     );
@@ -176,9 +192,17 @@ interface PnlTableProps {
     rows: Row[];
     expenses: Expense[];
     title?: string;
+    /** Show the export/download options (hidden for viewers). */
+    canDownload?: boolean;
 }
 
-export function PnlTable({ rows, expenses, title }: PnlTableProps) {
+export function PnlTable({
+    rows,
+    expenses,
+    title,
+    canDownload = true,
+}: PnlTableProps) {
+    const containerRef = useRef<HTMLDivElement>(null);
     const [driverFilter, setDriverFilter] = useState('');
     const [dispatcherFilter, setDispatcherFilter] = useState<Option[]>([]);
     const [typeFilter, setTypeFilter] = useState<Option[]>([]);
@@ -187,42 +211,90 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
     const [pageSize, setPageSize] = useState(15);
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
-    const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>({});
+    const [columnVisibility, setColumnVisibility] = useState<
+        Record<string, boolean>
+    >({});
 
     const dispatchers = useMemo(
-        () => [...new Set(rows.filter((r) => !r.is_total && r.dispatcher).map((r) => r.dispatcher))].sort(),
+        () =>
+            [
+                ...new Set(
+                    rows
+                        .filter((r) => !r.is_total && r.dispatcher)
+                        .map((r) => r.dispatcher),
+                ),
+            ].sort(),
         [rows],
     );
     const contractTypes = useMemo(
-        () => [...new Set(rows.filter((r) => !r.is_total && r.type).map((r) => r.type as string))].sort(),
+        () =>
+            [
+                ...new Set(
+                    rows
+                        .filter((r) => !r.is_total && r.type)
+                        .map((r) => r.type as string),
+                ),
+            ].sort(),
         [rows],
     );
     const trucks = useMemo(
-        () => [...new Set(rows.filter((r) => !r.is_total && r.truck_number).map((r) => r.truck_number as string))].sort(),
+        () =>
+            [
+                ...new Set(
+                    rows
+                        .filter((r) => !r.is_total && r.truck_number)
+                        .map((r) => r.truck_number as string),
+                ),
+            ].sort(),
         [rows],
     );
 
     const displayRows = useMemo(() => {
         let data = rows.filter((r) => !r.is_total);
+
         if (driverFilter) {
             const q = driverFilter.toLowerCase();
             data = data.filter((r) => r.driver_name.toLowerCase().includes(q));
         }
-        if (dispatcherFilter.length > 0) data = data.filter((r) => dispatcherFilter.some((o) => o.value === r.dispatcher));
-        if (typeFilter.length > 0) data = data.filter((r) => typeFilter.some((o) => o.value === (r.type ?? '')));
-        if (truckFilter.length > 0) data = data.filter((r) => truckFilter.some((o) => o.value === (r.truck_number ?? '')));
+
+        if (dispatcherFilter.length > 0) {
+            data = data.filter((r) =>
+                dispatcherFilter.some((o) => o.value === r.dispatcher),
+            );
+        }
+
+        if (typeFilter.length > 0) {
+            data = data.filter((r) =>
+                typeFilter.some((o) => o.value === (r.type ?? '')),
+            );
+        }
+
+        if (truckFilter.length > 0) {
+            data = data.filter((r) =>
+                truckFilter.some((o) => o.value === (r.truck_number ?? '')),
+            );
+        }
+
         return data;
-    }, [rows, driverFilter, dispatcherFilter, typeFilter, truckFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [rows, driverFilter, dispatcherFilter, typeFilter, truckFilter]);
 
     const totalRow = useMemo<Row | null>(() => {
-        if (displayRows.length === 0) return null;
+        if (displayRows.length === 0) {
+            return null;
+        }
+
         const configured = displayRows.filter((r) => !r.missing_config);
         const totalGross = configured.reduce((s, r) => s + r.total_gross, 0);
         const totalMiles = configured.reduce((s, r) => s + r.total_miles, 0);
         const expenseSums: Record<string, number> = {};
+
         for (const e of expenses) {
-            expenseSums[e.name] = configured.reduce((s, r) => s + (r.expenses[e.name] ?? 0), 0);
+            expenseSums[e.name] = configured.reduce(
+                (s, r) => s + (r.expenses[e.name] ?? 0),
+                0,
+            );
         }
+
         return {
             driver_id: null,
             driver_name: 'TOTAL',
@@ -235,8 +307,14 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
             rpm: totalMiles > 0 ? totalGross / totalMiles : 0,
             salary: configured.reduce((s, r) => s + (r.salary ?? 0), 0),
             expenses: expenseSums,
-            total_expenses: Object.values(expenseSums).reduce((s, v) => s + v, 0),
-            profit_loss: configured.reduce((s, r) => s + (r.profit_loss ?? 0), 0),
+            total_expenses: Object.values(expenseSums).reduce(
+                (s, v) => s + v,
+                0,
+            ),
+            profit_loss: configured.reduce(
+                (s, r) => s + (r.profit_loss ?? 0),
+                0,
+            ),
             missing_config: false,
             is_total: true,
         };
@@ -248,26 +326,98 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
         [displayRows, page, pageSize],
     );
 
-    const columns = useMemo<ColumnDef<Row>[]>(() => [
-        { id: 'driver_name', accessorKey: 'driver_name', header: 'Driver', size: 180, minSize: 100 },
-        { id: 'dispatcher', accessorKey: 'dispatcher', header: 'Dispatcher', size: 130, minSize: 80 },
-        { id: 'truck_number', accessorKey: 'truck_number', header: 'Truck', size: 90, minSize: 60, enableSorting: false },
-        { id: 'type', accessorKey: 'type', header: 'Type', size: 70, minSize: 50 },
-        { id: 'days', accessorKey: 'days', header: 'Days', size: 65, minSize: 50 },
-        { id: 'total_gross', accessorKey: 'total_gross', header: 'Gross', size: 110, minSize: 70 },
-        { id: 'total_miles', accessorKey: 'total_miles', header: 'Miles', size: 90, minSize: 70 },
-        { id: 'rpm', accessorKey: 'rpm', header: 'RPM', size: 80, minSize: 60 },
-        { id: 'salary', accessorKey: 'salary', header: 'Salary', size: 110, minSize: 70 },
-        ...expenses.map((e): ColumnDef<Row> => ({
-            id: `expense_${e.name}`,
-            header: e.name,
-            size: 110,
-            minSize: 70,
-            accessorFn: (row) => row.expenses[e.name] ?? null,
-        })),
-        { id: 'total_expenses', accessorKey: 'total_expenses', header: 'Total Exp.', size: 110, minSize: 70 },
-        { id: 'profit_loss', accessorKey: 'profit_loss', header: 'P&L', size: 110, minSize: 70 },
-    ], [expenses]);
+    const columns = useMemo<ColumnDef<Row>[]>(
+        () => [
+            {
+                id: 'driver_name',
+                accessorKey: 'driver_name',
+                header: 'Driver',
+                size: 180,
+                minSize: 100,
+            },
+            {
+                id: 'dispatcher',
+                accessorKey: 'dispatcher',
+                header: 'Dispatcher',
+                size: 130,
+                minSize: 80,
+            },
+            {
+                id: 'truck_number',
+                accessorKey: 'truck_number',
+                header: 'Truck',
+                size: 90,
+                minSize: 60,
+                enableSorting: false,
+            },
+            {
+                id: 'type',
+                accessorKey: 'type',
+                header: 'Type',
+                size: 70,
+                minSize: 50,
+            },
+            {
+                id: 'days',
+                accessorKey: 'days',
+                header: 'Days',
+                size: 65,
+                minSize: 50,
+            },
+            {
+                id: 'total_gross',
+                accessorKey: 'total_gross',
+                header: 'Gross',
+                size: 110,
+                minSize: 70,
+            },
+            {
+                id: 'total_miles',
+                accessorKey: 'total_miles',
+                header: 'Miles',
+                size: 90,
+                minSize: 70,
+            },
+            {
+                id: 'rpm',
+                accessorKey: 'rpm',
+                header: 'RPM',
+                size: 80,
+                minSize: 60,
+            },
+            {
+                id: 'salary',
+                accessorKey: 'salary',
+                header: 'Salary',
+                size: 110,
+                minSize: 70,
+            },
+            ...expenses.map(
+                (e): ColumnDef<Row> => ({
+                    id: `expense_${e.name}`,
+                    header: e.name,
+                    size: 110,
+                    minSize: 70,
+                    accessorFn: (row) => row.expenses[e.name] ?? null,
+                }),
+            ),
+            {
+                id: 'total_expenses',
+                accessorKey: 'total_expenses',
+                header: 'Total Exp.',
+                size: 110,
+                minSize: 70,
+            },
+            {
+                id: 'profit_loss',
+                accessorKey: 'profit_loss',
+                header: 'P&L',
+                size: 110,
+                minSize: 70,
+            },
+        ],
+        [expenses],
+    );
 
     const table = useReactTable({
         data: pagedRows,
@@ -288,51 +438,145 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
         setColumnSizing((prev) => ({ ...prev, [id]: size }));
     }, []);
 
-    const visibleHeaders = table.getHeaderGroups()[0]?.headers.filter((h) => h.column.getIsVisible()) ?? [];
+    const visibleHeaders =
+        table
+            .getHeaderGroups()[0]
+            ?.headers.filter((h) => h.column.getIsVisible()) ?? [];
 
     function renderCell(row: Row, colId: string) {
-        if (colId === 'driver_name')
+        if (colId === 'driver_name') {
             return (
-                <span className={row.missing_config ? 'font-medium text-amber-600' : ''}>
+                <span
+                    className={
+                        row.missing_config ? 'font-medium text-amber-600' : ''
+                    }
+                >
                     {row.driver_name}
-                    {row.missing_config && <span className="ml-1 text-xs text-amber-500">(no config)</span>}
+                    {row.missing_config && (
+                        <span className="ml-1 text-xs text-amber-500">
+                            (no config)
+                        </span>
+                    )}
                 </span>
             );
-        if (colId === 'dispatcher') return row.dispatcher;
-        if (colId === 'truck_number') return row.truck_number ?? '—';
-        if (colId === 'type') return row.type ?? '—';
-        if (colId === 'days') return fmtInt(row.days);
-        if (colId === 'total_gross') return fmt(row.total_gross, '$');
-        if (colId === 'total_miles') return fmtInt(row.total_miles);
-        if (colId === 'rpm') return fmt(row.rpm, '$');
-        if (colId === 'salary') return fmt(row.salary, '$');
-        if (colId === 'total_expenses') return fmt(row.total_expenses, '$');
-        if (colId === 'profit_loss')
+        }
+
+        if (colId === 'dispatcher') {
+            return row.dispatcher;
+        }
+
+        if (colId === 'truck_number') {
+            return row.truck_number ?? '—';
+        }
+
+        if (colId === 'type') {
+            return row.type ?? '—';
+        }
+
+        if (colId === 'days') {
+            return fmtInt(row.days);
+        }
+
+        if (colId === 'total_gross') {
+            return fmt(row.total_gross, '$');
+        }
+
+        if (colId === 'total_miles') {
+            return fmtInt(row.total_miles);
+        }
+
+        if (colId === 'rpm') {
+            return fmt(row.rpm, '$');
+        }
+
+        if (colId === 'salary') {
+            return fmt(row.salary, '$');
+        }
+
+        if (colId === 'total_expenses') {
+            return fmt(row.total_expenses, '$');
+        }
+
+        if (colId === 'profit_loss') {
             return (
-                <span className={cn('font-semibold tabular-nums', row.profit_loss != null && row.profit_loss < 0 ? 'text-red-600' : 'text-green-700')}>
+                <span
+                    className={cn(
+                        'font-semibold tabular-nums',
+                        row.profit_loss != null && row.profit_loss < 0
+                            ? 'text-red-600'
+                            : 'text-green-700',
+                    )}
+                >
                     {fmt(row.profit_loss, '$')}
                 </span>
             );
-        if (colId.startsWith('expense_')) return fmt(row.expenses[colId.slice('expense_'.length)] ?? null, '$');
+        }
+
+        if (colId.startsWith('expense_')) {
+            return fmt(
+                row.expenses[colId.slice('expense_'.length)] ?? null,
+                '$',
+            );
+        }
+
         return null;
     }
 
     function renderTotalCell(colId: string) {
-        if (!totalRow) return null;
-        if (colId === 'driver_name') return totalRow.driver_name;
-        if (colId === 'days') return fmtInt(totalRow.days);
-        if (colId === 'total_gross') return fmt(totalRow.total_gross, '$');
-        if (colId === 'total_miles') return fmtInt(totalRow.total_miles);
-        if (colId === 'rpm') return fmt(totalRow.rpm, '$');
-        if (colId === 'salary') return fmt(totalRow.salary, '$');
-        if (colId === 'total_expenses') return fmt(totalRow.total_expenses, '$');
-        if (colId === 'profit_loss')
+        if (!totalRow) {
+            return null;
+        }
+
+        if (colId === 'driver_name') {
+            return totalRow.driver_name;
+        }
+
+        if (colId === 'days') {
+            return fmtInt(totalRow.days);
+        }
+
+        if (colId === 'total_gross') {
+            return fmt(totalRow.total_gross, '$');
+        }
+
+        if (colId === 'total_miles') {
+            return fmtInt(totalRow.total_miles);
+        }
+
+        if (colId === 'rpm') {
+            return fmt(totalRow.rpm, '$');
+        }
+
+        if (colId === 'salary') {
+            return fmt(totalRow.salary, '$');
+        }
+
+        if (colId === 'total_expenses') {
+            return fmt(totalRow.total_expenses, '$');
+        }
+
+        if (colId === 'profit_loss') {
             return (
-                <span className={cn('font-semibold tabular-nums', totalRow.profit_loss != null && totalRow.profit_loss < 0 ? 'text-red-600' : 'text-green-700')}>
+                <span
+                    className={cn(
+                        'font-semibold tabular-nums',
+                        totalRow.profit_loss != null && totalRow.profit_loss < 0
+                            ? 'text-red-600'
+                            : 'text-green-700',
+                    )}
+                >
                     {fmt(totalRow.profit_loss, '$')}
                 </span>
             );
-        if (colId.startsWith('expense_')) return fmt(totalRow.expenses[colId.slice('expense_'.length)] ?? null, '$');
+        }
+
+        if (colId.startsWith('expense_')) {
+            return fmt(
+                totalRow.expenses[colId.slice('expense_'.length)] ?? null,
+                '$',
+            );
+        }
+
         return null;
     }
 
@@ -405,19 +649,29 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
               ]
             : [];
 
-        const ws = XLSX.utils.aoa_to_sheet([headers, ...driverData, ...totalRowArr]);
+        const ws = XLSX.utils.aoa_to_sheet([
+            headers,
+            ...driverData,
+            ...totalRowArr,
+        ]);
 
         // Column widths
         ws['!cols'] = headers.map((h) => ({ wch: Math.max(12, h.length + 2) }));
 
         // Number format for currency/numeric columns (skip first 4 string cols)
         const range = XLSX.utils.decode_range(ws['!ref'] as string);
+
         for (let R = 1; R <= range.e.r; ++R) {
             for (let C = 4; C <= range.e.c; ++C) {
                 const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
                 const cell = ws[cellRef];
-                if (!cell || typeof cell.v !== 'number') continue;
+
+                if (!cell || typeof cell.v !== 'number') {
+                    continue;
+                }
+
                 cell.t = 'n';
+
                 // Days, Miles -> integer; everything else -> currency
                 if (C === 4 || C === 6) {
                     cell.z = '#,##0';
@@ -430,35 +684,59 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'P&L Report');
 
-        const ts = new Date().toISOString().slice(0, 19).replace('T', '_').replaceAll(':', '-');
+        const ts = new Date()
+            .toISOString()
+            .slice(0, 19)
+            .replace('T', '_')
+            .replaceAll(':', '-');
         XLSX.writeFile(wb, `pnl-report-${ts}.xlsx`);
     }, [rows, expenses, totalRow]);
 
+    const handleDownloadImage = useCallback(() => {
+        if (containerRef.current) {
+            void downloadElementAsPng(containerRef.current, 'pnl-report');
+        }
+    }, []);
+
     return (
-        <div className="flex flex-col gap-3">
+        <div ref={containerRef} className="flex flex-col gap-3">
             {/* Toolbar */}
             <div className="flex items-center justify-between gap-2">
                 {title && <h1 className="text-xl font-semibold">{title}</h1>}
                 <div className="flex items-center gap-2">
                     <SettingsPopover
                         activeFilterCount={activeFilterCount}
+                        canDownload={canDownload}
                         onExport={handleExport}
+                        onDownloadImage={handleDownloadImage}
                         // visibility props
                         columns={allLeafColumns}
                         columnVisibility={columnVisibility}
                         setColumnVisibility={setColumnVisibility}
                         // filter props
                         driverFilter={driverFilter}
-                        setDriverFilter={(v) => { setDriverFilter(v); setPage(1); }}
+                        setDriverFilter={(v) => {
+                            setDriverFilter(v);
+                            setPage(1);
+                        }}
                         dispatchers={dispatchers}
                         dispatcherFilter={dispatcherFilter}
-                        setDispatcherFilter={(v) => { setDispatcherFilter(v); setPage(1); }}
+                        setDispatcherFilter={(v) => {
+                            setDispatcherFilter(v);
+                            setPage(1);
+                        }}
                         contractTypes={contractTypes}
                         typeFilter={typeFilter}
-                        setTypeFilter={(v) => { setTypeFilter(v); setPage(1); }}
+                        setTypeFilter={(v) => {
+                            setTypeFilter(v);
+                            setPage(1);
+                        }}
                         trucks={trucks}
                         truckFilter={truckFilter}
-                        setTruckFilter={(v) => { setTruckFilter(v); setPage(1); }}
+                        setTruckFilter={(v) => {
+                            setTruckFilter(v);
+                            setPage(1);
+                        }}
                         clearFilters={clearFilters}
                     />
                 </div>
@@ -466,7 +744,9 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
 
             {/* Table */}
             <div className="overflow-x-auto rounded-lg border">
-                <Table style={{ minWidth: 'max-content', tableLayout: 'fixed' }}>
+                <Table
+                    style={{ minWidth: 'max-content', tableLayout: 'fixed' }}
+                >
                     <TableHeader>
                         <TableRow>
                             {visibleHeaders.map((header) => (
@@ -479,7 +759,10 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
                                     onSort={() => header.column.toggleSorting()}
                                     onResize={handleResize}
                                 >
-                                    {flexRender(header.column.columnDef.header, header.getContext())}
+                                    {flexRender(
+                                        header.column.columnDef.header,
+                                        header.getContext(),
+                                    )}
                                 </ColHead>
                             ))}
                         </TableRow>
@@ -488,15 +771,25 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
                         {table.getRowModel().rows.map((row) => (
                             <TableRow
                                 key={row.id}
-                                className={row.original.missing_config ? 'bg-amber-50 dark:bg-amber-950/20' : ''}
+                                className={
+                                    row.original.missing_config
+                                        ? 'bg-amber-50 dark:bg-amber-950/20'
+                                        : ''
+                                }
                             >
                                 {row.getVisibleCells().map((cell) => (
                                     <TableCell
                                         key={cell.id}
-                                        style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
-                                        className="overflow-hidden px-2 py-2 text-sm whitespace-nowrap text-ellipsis tabular-nums"
+                                        style={{
+                                            width: cell.column.getSize(),
+                                            minWidth: cell.column.getSize(),
+                                        }}
+                                        className="overflow-hidden px-2 py-2 text-sm text-ellipsis whitespace-nowrap tabular-nums"
                                     >
-                                        {renderCell(row.original, cell.column.id)}
+                                        {renderCell(
+                                            row.original,
+                                            cell.column.id,
+                                        )}
                                     </TableCell>
                                 ))}
                             </TableRow>
@@ -506,8 +799,11 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
                                 {visibleHeaders.map((header) => (
                                     <TableCell
                                         key={header.id}
-                                        style={{ width: header.column.getSize(), minWidth: header.column.getSize() }}
-                                        className="overflow-hidden px-2 py-2 text-sm whitespace-nowrap text-ellipsis tabular-nums"
+                                        style={{
+                                            width: header.column.getSize(),
+                                            minWidth: header.column.getSize(),
+                                        }}
+                                        className="overflow-hidden px-2 py-2 text-sm text-ellipsis whitespace-nowrap tabular-nums"
                                     >
                                         {renderTotalCell(header.id)}
                                     </TableCell>
@@ -521,10 +817,22 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <span>Rows per page</span>
-                    <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
-                        <SelectTrigger className="h-7 w-16"><SelectValue /></SelectTrigger>
+                    <Select
+                        value={String(pageSize)}
+                        onValueChange={(v) => {
+                            setPageSize(Number(v));
+                            setPage(1);
+                        }}
+                    >
+                        <SelectTrigger className="h-7 w-16">
+                            <SelectValue />
+                        </SelectTrigger>
                         <SelectContent side="top">
-                            {PAGE_SIZE_OPTIONS.map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
+                            {PAGE_SIZE_OPTIONS.map((n) => (
+                                <SelectItem key={n} value={String(n)}>
+                                    {n}
+                                </SelectItem>
+                            ))}
                         </SelectContent>
                     </Select>
                 </div>
@@ -533,19 +841,38 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
                         <PaginationContent className="flex-wrap">
                             <PaginationItem>
                                 <PaginationPrevious
-                                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                                    className={page <= 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                                    onClick={() =>
+                                        setPage((p) => Math.max(1, p - 1))
+                                    }
+                                    className={
+                                        page <= 1
+                                            ? 'pointer-events-none opacity-50'
+                                            : 'cursor-pointer'
+                                    }
                                 />
                             </PaginationItem>
                             <PaginationItem>
                                 <span className="px-3 py-2 text-sm whitespace-nowrap text-muted-foreground">
-                                    {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, displayRows.length)} of {displayRows.length} drivers
+                                    {(page - 1) * pageSize + 1}–
+                                    {Math.min(
+                                        page * pageSize,
+                                        displayRows.length,
+                                    )}{' '}
+                                    of {displayRows.length} drivers
                                 </span>
                             </PaginationItem>
                             <PaginationItem>
                                 <PaginationNext
-                                    onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-                                    className={page >= pageCount ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                                    onClick={() =>
+                                        setPage((p) =>
+                                            Math.min(pageCount, p + 1),
+                                        )
+                                    }
+                                    className={
+                                        page >= pageCount
+                                            ? 'pointer-events-none opacity-50'
+                                            : 'cursor-pointer'
+                                    }
                                 />
                             </PaginationItem>
                         </PaginationContent>
@@ -562,14 +889,20 @@ export function PnlTable({ rows, expenses, title }: PnlTableProps) {
 
 type ViewKey = 'main' | 'visibility' | 'filter';
 
-type Column = ReturnType<ReturnType<typeof useReactTable<Row>>['getAllLeafColumns']>[number];
+type Column = ReturnType<
+    ReturnType<typeof useReactTable<Row>>['getAllLeafColumns']
+>[number];
 
 interface SettingsPopoverProps {
     activeFilterCount: number;
+    canDownload: boolean;
     onExport: () => void;
+    onDownloadImage: () => void;
     columns: Column[];
     columnVisibility: Record<string, boolean>;
-    setColumnVisibility: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+    setColumnVisibility: React.Dispatch<
+        React.SetStateAction<Record<string, boolean>>
+    >;
     driverFilter: string;
     setDriverFilter: (v: string) => void;
     dispatchers: string[];
@@ -586,7 +919,9 @@ interface SettingsPopoverProps {
 
 function SettingsPopover({
     activeFilterCount,
+    canDownload,
     onExport,
+    onDownloadImage,
     columns,
     columnVisibility,
     setColumnVisibility,
@@ -604,7 +939,9 @@ function SettingsPopover({
     clearFilters,
 }: SettingsPopoverProps) {
     const [view, setView] = useState<ViewKey>('main');
-    const visibleCount = columns.filter((c) => columnVisibility[c.id] !== false).length;
+    const visibleCount = columns.filter(
+        (c) => columnVisibility[c.id] !== false,
+    ).length;
     const totalCount = columns.length;
 
     return (
@@ -613,7 +950,9 @@ function SettingsPopover({
                 <button
                     className={cn(
                         'inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors hover:bg-accent',
-                        activeFilterCount > 0 ? 'border-primary/40 bg-primary/5 text-primary' : 'text-muted-foreground',
+                        activeFilterCount > 0
+                            ? 'border-primary/40 bg-primary/5 text-primary'
+                            : 'text-muted-foreground',
                     )}
                 >
                     <Settings2Icon className="h-3.5 w-3.5" />
@@ -628,7 +967,7 @@ function SettingsPopover({
             <PopoverContent align="end" className="w-72 overflow-visible p-0">
                 {view === 'main' && (
                     <div className="flex flex-col py-1">
-                        <p className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                        <p className="px-3 py-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                             View settings
                         </p>
                         <SettingsRow
@@ -640,16 +979,30 @@ function SettingsPopover({
                         <SettingsRow
                             icon={<FilterIcon className="h-4 w-4" />}
                             label="Filter"
-                            value={activeFilterCount > 0 ? `${activeFilterCount} active` : undefined}
+                            value={
+                                activeFilterCount > 0
+                                    ? `${activeFilterCount} active`
+                                    : undefined
+                            }
                             onClick={() => setView('filter')}
                         />
-                        <div className="my-1 border-t" />
-                        <SettingsRow
-                            icon={<DownloadIcon className="h-4 w-4" />}
-                            label="Export to XLSX"
-                            onClick={onExport}
-                            showChevron={false}
-                        />
+                        {canDownload && (
+                            <>
+                                <div className="my-1 border-t" />
+                                <SettingsRow
+                                    icon={<DownloadIcon className="h-4 w-4" />}
+                                    label="Export to XLSX"
+                                    onClick={onExport}
+                                    showChevron={false}
+                                />
+                                <SettingsRow
+                                    icon={<ImageIcon className="h-4 w-4" />}
+                                    label="Download as image"
+                                    onClick={onDownloadImage}
+                                    showChevron={false}
+                                />
+                            </>
+                        )}
                     </div>
                 )}
 
@@ -705,13 +1058,25 @@ function SettingsRow({
         >
             <span className="text-muted-foreground">{icon}</span>
             <span className="flex-1 text-left">{label}</span>
-            {value && <span className="text-xs text-muted-foreground">{value}</span>}
-            {showChevron && <ChevronRightIcon className="h-3.5 w-3.5 text-muted-foreground" />}
+            {value && (
+                <span className="text-xs text-muted-foreground">{value}</span>
+            )}
+            {showChevron && (
+                <ChevronRightIcon className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
         </button>
     );
 }
 
-function PanelHeader({ title, onBack, action }: { title: string; onBack: () => void; action?: React.ReactNode }) {
+function PanelHeader({
+    title,
+    onBack,
+    action,
+}: {
+    title: string;
+    onBack: () => void;
+    action?: React.ReactNode;
+}) {
     return (
         <div className="flex items-center gap-2 border-b px-2 py-2">
             <button
@@ -735,21 +1100,30 @@ function VisibilityPanel({
 }: {
     columns: Column[];
     columnVisibility: Record<string, boolean>;
-    setColumnVisibility: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+    setColumnVisibility: React.Dispatch<
+        React.SetStateAction<Record<string, boolean>>
+    >;
     onBack: () => void;
 }) {
     const [search, setSearch] = useState('');
 
     const getLabel = (col: Column) =>
-        typeof col.columnDef.header === 'string' ? col.columnDef.header : col.id;
+        typeof col.columnDef.header === 'string'
+            ? col.columnDef.header
+            : col.id;
     const isVisible = (colId: string) => columnVisibility[colId] !== false;
 
     const toggleColumn = (colId: string) => {
-        setColumnVisibility((prev) => ({ ...prev, [colId]: prev[colId] === false }));
+        setColumnVisibility((prev) => ({
+            ...prev,
+            [colId]: prev[colId] === false,
+        }));
     };
 
     const hideAll = () => {
-        setColumnVisibility(Object.fromEntries(columns.map((c) => [c.id, false])));
+        setColumnVisibility(
+            Object.fromEntries(columns.map((c) => [c.id, false])),
+        );
     };
 
     const showAll = () => {
@@ -757,10 +1131,14 @@ function VisibilityPanel({
     };
 
     const filtered = useMemo(() => {
-        if (!search.trim()) return columns;
+        if (!search.trim()) {
+            return columns;
+        }
+
         const q = search.toLowerCase();
+
         return columns.filter((c) => getLabel(c).toLowerCase().includes(q));
-    }, [columns, search]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [columns, search]);
 
     const shown = filtered.filter((c) => isVisible(c.id));
     const hidden = filtered.filter((c) => !isVisible(c.id));
@@ -776,20 +1154,25 @@ function VisibilityPanel({
                         placeholder="Search for a property…"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        className="h-8 w-full rounded-md border bg-transparent pl-7 pr-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        className="h-8 w-full rounded-md border bg-transparent pr-2 pl-7 text-sm focus:ring-1 focus:ring-ring focus:outline-none"
                     />
                 </div>
             </div>
             <div className="max-h-80 overflow-y-auto">
                 {filtered.length === 0 && (
-                    <p className="px-3 py-4 text-center text-xs text-muted-foreground">No properties</p>
+                    <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+                        No properties
+                    </p>
                 )}
 
                 {shown.length > 0 && (
                     <VisibilitySection
                         title="Shown in table"
                         action={
-                            <button onClick={hideAll} className="text-xs font-medium text-primary hover:underline">
+                            <button
+                                onClick={hideAll}
+                                className="text-xs font-medium text-primary hover:underline"
+                            >
                                 Hide all
                             </button>
                         }
@@ -809,7 +1192,10 @@ function VisibilityPanel({
                     <VisibilitySection
                         title="Hidden in table"
                         action={
-                            <button onClick={showAll} className="text-xs font-medium text-primary hover:underline">
+                            <button
+                                onClick={showAll}
+                                className="text-xs font-medium text-primary hover:underline"
+                            >
                                 Show all
                             </button>
                         }
@@ -841,7 +1227,9 @@ function VisibilitySection({
     return (
         <div className="py-1">
             <div className="flex items-center justify-between px-3 py-1.5">
-                <p className="text-xs font-medium text-muted-foreground">{title}</p>
+                <p className="text-xs font-medium text-muted-foreground">
+                    {title}
+                </p>
                 {action}
             </div>
             {children}
@@ -863,7 +1251,14 @@ function PropertyRow({
             onClick={onToggle}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent"
         >
-            <span className={cn('flex-1 truncate text-left', !visible && 'text-muted-foreground')}>{label}</span>
+            <span
+                className={cn(
+                    'flex-1 truncate text-left',
+                    !visible && 'text-muted-foreground',
+                )}
+            >
+                {label}
+            </span>
             {visible ? (
                 <EyeIcon className="h-4 w-4 text-foreground" />
             ) : (
@@ -888,7 +1283,15 @@ function FilterPanel({
     truckFilter,
     setTruckFilter,
     clearFilters,
-}: Omit<SettingsPopoverProps, 'columns' | 'onExport' | 'columnVisibility' | 'setColumnVisibility'> & { onBack: () => void }) {
+}: Omit<
+    SettingsPopoverProps,
+    | 'columns'
+    | 'onExport'
+    | 'onDownloadImage'
+    | 'canDownload'
+    | 'columnVisibility'
+    | 'setColumnVisibility'
+> & { onBack: () => void }) {
     return (
         <div className="flex flex-col">
             <PanelHeader
@@ -896,7 +1299,10 @@ function FilterPanel({
                 onBack={onBack}
                 action={
                     activeFilterCount > 0 ? (
-                        <button onClick={clearFilters} className="text-xs font-medium text-primary hover:underline">
+                        <button
+                            onClick={clearFilters}
+                            className="text-xs font-medium text-primary hover:underline"
+                        >
                             Clear all
                         </button>
                     ) : undefined
@@ -909,45 +1315,75 @@ function FilterPanel({
                         placeholder="Search driver…"
                         value={driverFilter}
                         onChange={(e) => setDriverFilter(e.target.value)}
-                        className="h-8 w-full rounded-md border bg-transparent pl-7 pr-7 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        className="h-8 w-full rounded-md border bg-transparent pr-7 pl-7 text-sm focus:ring-1 focus:ring-ring focus:outline-none"
                     />
                     {driverFilter && (
-                        <button onClick={() => setDriverFilter('')} className="absolute right-2">
+                        <button
+                            onClick={() => setDriverFilter('')}
+                            className="absolute right-2"
+                        >
                             <XIcon className="h-3.5 w-3.5 text-muted-foreground" />
                         </button>
                     )}
                 </div>
                 <div className="flex flex-col gap-1">
-                    <label className="text-xs text-muted-foreground">Dispatcher</label>
+                    <label className="text-xs text-muted-foreground">
+                        Dispatcher
+                    </label>
                     <MultipleSelector
                         value={dispatcherFilter}
                         onChange={setDispatcherFilter}
-                        defaultOptions={dispatchers.map((d) => ({ label: d, value: d }))}
+                        defaultOptions={dispatchers.map((d) => ({
+                            label: d,
+                            value: d,
+                        }))}
                         placeholder="All dispatchers"
                         hideClearAllButton
-                        emptyIndicator={<p className="text-center text-xs text-muted-foreground">No results</p>}
+                        emptyIndicator={
+                            <p className="text-center text-xs text-muted-foreground">
+                                No results
+                            </p>
+                        }
                     />
                 </div>
                 <div className="flex flex-col gap-1">
-                    <label className="text-xs text-muted-foreground">Type</label>
+                    <label className="text-xs text-muted-foreground">
+                        Type
+                    </label>
                     <MultipleSelector
                         value={typeFilter}
                         onChange={setTypeFilter}
-                        defaultOptions={contractTypes.map((t) => ({ label: t, value: t }))}
+                        defaultOptions={contractTypes.map((t) => ({
+                            label: t,
+                            value: t,
+                        }))}
                         placeholder="All types"
                         hideClearAllButton
-                        emptyIndicator={<p className="text-center text-xs text-muted-foreground">No results</p>}
+                        emptyIndicator={
+                            <p className="text-center text-xs text-muted-foreground">
+                                No results
+                            </p>
+                        }
                     />
                 </div>
                 <div className="flex flex-col gap-1">
-                    <label className="text-xs text-muted-foreground">Truck</label>
+                    <label className="text-xs text-muted-foreground">
+                        Truck
+                    </label>
                     <MultipleSelector
                         value={truckFilter}
                         onChange={setTruckFilter}
-                        defaultOptions={trucks.map((t) => ({ label: t, value: t }))}
+                        defaultOptions={trucks.map((t) => ({
+                            label: t,
+                            value: t,
+                        }))}
                         placeholder="All trucks"
                         hideClearAllButton
-                        emptyIndicator={<p className="text-center text-xs text-muted-foreground">No results</p>}
+                        emptyIndicator={
+                            <p className="text-center text-xs text-muted-foreground">
+                                No results
+                            </p>
+                        }
                     />
                 </div>
             </div>

@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers\Analytics;
 
+use App\Enums\TeamRole;
 use App\Http\Controllers\Controller;
+use App\Models\DashboardShare;
 use App\Models\Team;
 use App\Services\AnalyticsService;
 use Carbon\Carbon;
@@ -35,6 +37,9 @@ class AnalyticsController extends Controller
         $rows = $this->analytics->weeklyReport($currentTeam, $startDate, $endDate);
         $keyMetrics = $this->analytics->weeklyKeyMetrics($currentTeam, $startDate, $endDate);
 
+        // Sharing/downloads are for Members and above; Viewers never see them.
+        $canManage = $request->user()->teamRole($currentTeam)?->isAtLeast(TeamRole::Member) ?? false;
+
         return Inertia::render('analytics/index', [
             'rows' => $rows->values(),
             'keyMetrics' => $keyMetrics,
@@ -45,6 +50,32 @@ class AnalyticsController extends Controller
             ])->values(),
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
+            'canManage' => $canManage,
+            'shares' => $canManage ? $this->activeShares($currentTeam) : [],
         ]);
+    }
+
+    /**
+     * Active (non-revoked, non-expired) share links for the team.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function activeShares(Team $team): array
+    {
+        return $team->dashboardShares()
+            ->whereNull('revoked_at')
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->latest()
+            ->get()
+            ->map(fn (DashboardShare $share) => [
+                'token' => $share->token,
+                'url' => route('shared.show', $share),
+                'start_date' => $share->start_date->toDateString(),
+                'end_date' => $share->end_date->toDateString(),
+                'widgets' => $share->widgets,
+                'expires_at' => $share->expires_at?->toISOString(),
+                'created_at' => $share->created_at->toISOString(),
+            ])
+            ->all();
     }
 }

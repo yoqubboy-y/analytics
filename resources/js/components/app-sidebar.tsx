@@ -16,6 +16,8 @@ import type { NavItem } from '@/types';
 export function AppSidebar() {
     const page = usePage();
     const slug = page.props.currentTeam?.slug;
+    // Viewers are analytics-only — no access to configuration.
+    const isViewer = page.props.currentTeam?.role === 'viewer';
 
     const mainNavItems: NavItem[] = [
         {
@@ -25,13 +27,15 @@ export function AppSidebar() {
         },
     ];
 
-    const configNavItems: NavItem[] = [
-        {
-            title: 'Configurations',
-            href: slug ? `/${slug}/configuration` : '#',
-            icon: Settings2,
-        },
-    ];
+    const configNavItems: NavItem[] = isViewer
+        ? []
+        : [
+              {
+                  title: 'Configurations',
+                  href: slug ? `/${slug}/configuration` : '#',
+                  icon: Settings2,
+              },
+          ];
 
     return (
         <Sidebar collapsible="icon" variant="inset">
@@ -45,7 +49,9 @@ export function AppSidebar() {
 
             <SidebarContent>
                 <NavMain items={mainNavItems} />
-                <NavMain items={configNavItems} label="Settings" />
+                {configNavItems.length > 0 && (
+                    <NavMain items={configNavItems} label="Settings" />
+                )}
             </SidebarContent>
 
             <SidebarFooter>

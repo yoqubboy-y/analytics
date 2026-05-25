@@ -53,15 +53,16 @@ function something()
 }
 
 /**
- * Create a verified user that owns a fresh team and has it as their current team.
+ * Create a verified user that belongs to a fresh team (Owner by default) and
+ * has it as their current team.
  *
  * @return array{0: User, 1: Team}
  */
-function createTeamMember(): array
+function createTeamMember(TeamRole $role = TeamRole::Owner): array
 {
     $user = User::factory()->create();
     $team = Team::factory()->create();
-    $team->members()->attach($user, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($user, ['role' => $role->value]);
     $user->switchTeam($team);
 
     return [$user, $team];
