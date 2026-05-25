@@ -1,5 +1,5 @@
 import { usePage } from '@inertiajs/react';
-import { Settings2, TrendingUp } from 'lucide-react';
+import { Cog, Settings2, TrendingUp } from 'lucide-react';
 import { NavMain } from '@/components/nav-main';
 import { NavUser } from '@/components/nav-user';
 import { TeamSwitcher } from '@/components/team-switcher';
@@ -37,6 +37,14 @@ export function AppSidebar() {
               },
           ];
 
+    const adminNavItems: NavItem[] = [
+        {
+            title: 'Administration',
+            href: '/administration',
+            icon: Cog,
+        },
+    ];
+
     return (
         <Sidebar collapsible="icon" variant="inset">
             <SidebarHeader>
@@ -52,6 +60,7 @@ export function AppSidebar() {
                 {configNavItems.length > 0 && (
                     <NavMain items={configNavItems} label="Settings" />
                 )}
+                <NavMain items={adminNavItems} label="Administration" />
             </SidebarContent>
 
             <SidebarFooter>

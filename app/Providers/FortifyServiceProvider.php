@@ -8,8 +8,11 @@ use App\Http\Responses\LoginResponse;
 use App\Http\Responses\RegisterResponse;
 use App\Http\Responses\TwoFactorLoginResponse;
 use App\Models\TeamInvitation;
+use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
@@ -39,7 +42,32 @@ class FortifyServiceProvider extends ServiceProvider
     {
         $this->configureActions();
         $this->configureViews();
+        $this->configureNotifications();
         $this->configureRateLimiting();
+    }
+
+    /**
+     * Brand the auth notification emails (password reset, email verification).
+     */
+    private function configureNotifications(): void
+    {
+        ResetPassword::toMailUsing(function (object $notifiable, string $token): MailMessage {
+            $url = url(route('password.reset', [
+                'token' => $token,
+                'email' => $notifiable->getEmailForPasswordReset(),
+            ], false));
+
+            return (new MailMessage)
+                ->subject(__('Reset your :app password', ['app' => config('app.name')]))
+                ->markdown('emails.reset-password', [
+                    'url' => $url,
+                    'count' => config('auth.passwords.'.config('auth.defaults.passwords').'.expire', 60),
+                ]);
+        });
+
+        VerifyEmail::toMailUsing(fn (object $notifiable, string $url): MailMessage => (new MailMessage)
+            ->subject(__('Verify your :app email address', ['app' => config('app.name')]))
+            ->markdown('emails.verify-email', ['url' => $url]));
     }
 
     /**

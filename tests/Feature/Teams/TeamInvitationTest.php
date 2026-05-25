@@ -21,7 +21,7 @@ test('team invitations can be created', function () {
             'role' => TeamRole::Member->value,
         ]);
 
-    $response->assertRedirect(route('teams.edit', $team));
+    $response->assertRedirect();
 
     $this->assertDatabaseHas('team_invitations', [
         'team_id' => $team->id,
@@ -47,7 +47,7 @@ test('team invitations can be created by admins', function () {
             'role' => TeamRole::Member->value,
         ]);
 
-    $response->assertRedirect(route('teams.edit', $team));
+    $response->assertRedirect();
 });
 
 test('existing team members cannot be invited', function () {
@@ -126,7 +126,7 @@ test('team invitations can be cancelled by owners', function () {
         ->actingAs($owner)
         ->delete(route('teams.invitations.destroy', [$team, $invitation]));
 
-    $response->assertRedirect(route('teams.edit', $team));
+    $response->assertRedirect();
 
     $this->assertDatabaseMissing('team_invitations', [
         'id' => $invitation->id,

@@ -4,16 +4,6 @@ use App\Enums\TeamRole;
 use App\Models\Team;
 use App\Models\User;
 
-test('the teams index page can be rendered', function () {
-    $user = User::factory()->create();
-
-    $response = $this
-        ->actingAs($user)
-        ->get(route('teams.index'));
-
-    $response->assertOk();
-});
-
 test('teams can be created', function () {
     $user = User::factory()->create();
 
@@ -50,19 +40,6 @@ test('team slug uses next available suffix', function () {
     ]);
 });
 
-test('the team edit page can be rendered', function () {
-    $user = User::factory()->create();
-    $team = Team::factory()->create();
-
-    $team->members()->attach($user, ['role' => TeamRole::Owner->value]);
-
-    $response = $this
-        ->actingAs($user)
-        ->get(route('teams.edit', $team));
-
-    $response->assertOk();
-});
-
 test('teams can be updated by owners', function () {
     $user = User::factory()->create();
     $team = Team::factory()->create(['name' => 'Original Name']);
@@ -75,7 +52,7 @@ test('teams can be updated by owners', function () {
             'name' => 'Updated Name',
         ]);
 
-    $response->assertRedirect(route('teams.edit', $team->fresh()));
+    $response->assertRedirect();
 
     $this->assertDatabaseHas('teams', [
         'id' => $team->id,
@@ -298,8 +275,8 @@ test('users cannot switch to team they dont belong to', function () {
     $response->assertForbidden();
 });
 
-test('guests cannot access teams', function () {
-    $response = $this->get(route('teams.index'));
+test('guests cannot access administration', function () {
+    $response = $this->get(route('administration.index'));
 
     $response->assertRedirect(route('login'));
 });

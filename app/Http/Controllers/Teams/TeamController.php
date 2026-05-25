@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Teams;
 
 use App\Actions\Teams\CreateTeam;
-use App\Enums\TeamRole;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Teams\DeleteTeamRequest;
 use App\Http\Requests\Teams\SaveTeamRequest;
@@ -14,24 +13,11 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
-use Inertia\Response;
 
 class TeamController extends Controller
 {
     /**
-     * Display a listing of the user's teams.
-     */
-    public function index(Request $request): Response
-    {
-        $user = $request->user();
-
-        return Inertia::render('teams/index', [
-            'teams' => $user->toUserTeams(includeCurrent: true),
-        ]);
-    }
-
-    /**
-     * Store a newly created team.
+     * Store a newly created team and open its management page.
      */
     public function store(SaveTeamRequest $request, CreateTeam $createTeam): RedirectResponse
     {
@@ -39,44 +25,7 @@ class TeamController extends Controller
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Team created.')]);
 
-        return to_route('teams.edit', ['team' => $team->slug]);
-    }
-
-    /**
-     * Show the team edit page.
-     */
-    public function edit(Request $request, Team $team): Response
-    {
-        $user = $request->user();
-
-        return Inertia::render('teams/edit', [
-            'team' => [
-                'id' => $team->id,
-                'name' => $team->name,
-                'slug' => $team->slug,
-                'isPersonal' => $team->is_personal,
-            ],
-            'members' => $team->members()->get()->map(fn ($member) => [
-                'id' => $member->id,
-                'name' => $member->name,
-                'email' => $member->email,
-                'avatar' => $member->avatar ?? null,
-                'role' => $member->pivot->role->value,
-                'role_label' => $member->pivot->role?->label(),
-            ]),
-            'invitations' => $team->invitations()
-                ->whereNull('accepted_at')
-                ->get()
-                ->map(fn ($invitation) => [
-                    'code' => $invitation->code,
-                    'email' => $invitation->email,
-                    'role' => $invitation->role->value,
-                    'role_label' => $invitation->role->label(),
-                    'created_at' => $invitation->created_at->toISOString(),
-                ]),
-            'permissions' => $user->toTeamPermissions($team),
-            'availableRoles' => TeamRole::assignable(),
-        ]);
+        return to_route('administration.teams.show', ['team' => $team->slug]);
     }
 
     /**
@@ -86,17 +35,15 @@ class TeamController extends Controller
     {
         Gate::authorize('update', $team);
 
-        $team = DB::transaction(function () use ($request, $team) {
+        DB::transaction(function () use ($request, $team) {
             $team = Team::whereKey($team->id)->lockForUpdate()->firstOrFail();
 
             $team->update(['name' => $request->validated('name')]);
-
-            return $team;
         });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Team updated.')]);
 
-        return to_route('teams.edit', ['team' => $team->slug]);
+        return back();
     }
 
     /**
@@ -137,6 +84,6 @@ class TeamController extends Controller
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Team deleted.')]);
 
-        return to_route('teams.index');
+        return to_route('administration.index');
     }
 }

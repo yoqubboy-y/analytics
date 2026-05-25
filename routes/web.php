@@ -4,6 +4,7 @@ use App\Enums\TeamRole;
 use App\Http\Controllers\Analytics\AnalyticsController;
 use App\Http\Controllers\Analytics\ConfigurationController;
 use App\Http\Controllers\Analytics\DashboardShareController;
+use App\Http\Controllers\Teams\AdministrationController;
 use App\Http\Controllers\Teams\TeamInvitationController;
 use App\Http\Middleware\EnsureTeamMembership;
 use App\Models\Team;
@@ -49,6 +50,14 @@ Route::prefix('{current_team}')
             Route::delete('configuration/expenses/{teamExpense}/rates/{teamExpenseRate}', [ConfigurationController::class, 'destroyExpenseRate'])->name('configuration.expenses.rates.destroy');
         });
     });
+
+// Administration — team & user management (replaces the old settings/teams pages).
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('administration', [AdministrationController::class, 'index'])->name('administration.index');
+    Route::get('administration/teams/{team}', [AdministrationController::class, 'show'])
+        ->middleware(EnsureTeamMembership::class.':'.TeamRole::Admin->value)
+        ->name('administration.teams.show');
+});
 
 Route::get('invitations/{invitation}/accept', [TeamInvitationController::class, 'accept'])->name('invitations.accept');
 

@@ -26,19 +26,20 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::inertia('settings/appearance', 'settings/appearance')->name('appearance.edit');
 
-    Route::get('settings/teams', [TeamController::class, 'index'])->name('teams.index');
-    Route::post('settings/teams', [TeamController::class, 'store'])->name('teams.store');
+    // Team management UI lives under "Administration" (see routes/web.php); these
+    // are the mutation endpoints it (and the team switcher) post to.
+    Route::post('teams', [TeamController::class, 'store'])->name('teams.store');
 
     Route::middleware(EnsureTeamMembership::class)->group(function () {
-        Route::get('settings/teams/{team}', [TeamController::class, 'edit'])->name('teams.edit');
-        Route::patch('settings/teams/{team}', [TeamController::class, 'update'])->name('teams.update');
-        Route::delete('settings/teams/{team}', [TeamController::class, 'destroy'])->name('teams.destroy');
-        Route::post('settings/teams/{team}/switch', [TeamController::class, 'switch'])->name('teams.switch');
+        Route::patch('teams/{team}', [TeamController::class, 'update'])->name('teams.update');
+        Route::delete('teams/{team}', [TeamController::class, 'destroy'])->name('teams.destroy');
+        Route::post('teams/{team}/switch', [TeamController::class, 'switch'])->name('teams.switch');
 
-        Route::patch('settings/teams/{team}/members/{user}', [TeamMemberController::class, 'update'])->name('teams.members.update');
-        Route::delete('settings/teams/{team}/members/{user}', [TeamMemberController::class, 'destroy'])->name('teams.members.destroy');
+        Route::patch('teams/{team}/members/{user}', [TeamMemberController::class, 'update'])->name('teams.members.update');
+        Route::delete('teams/{team}/members/{user}', [TeamMemberController::class, 'destroy'])->name('teams.members.destroy');
 
-        Route::post('settings/teams/{team}/invitations', [TeamInvitationController::class, 'store'])->name('teams.invitations.store');
-        Route::delete('settings/teams/{team}/invitations/{invitation}', [TeamInvitationController::class, 'destroy'])->name('teams.invitations.destroy');
+        Route::post('teams/{team}/invitations', [TeamInvitationController::class, 'store'])->name('teams.invitations.store');
+        Route::post('teams/{team}/invitations/{invitation}/resend', [TeamInvitationController::class, 'resend'])->name('teams.invitations.resend');
+        Route::delete('teams/{team}/invitations/{invitation}', [TeamInvitationController::class, 'destroy'])->name('teams.invitations.destroy');
     });
 });

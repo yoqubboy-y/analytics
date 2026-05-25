@@ -37,7 +37,26 @@ class TeamInvitationController extends Controller
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Invitation sent.')]);
 
-        return to_route('teams.edit', ['team' => $team->slug]);
+        return back();
+    }
+
+    /**
+     * Re-send (and refresh the expiry of) a pending invitation.
+     */
+    public function resend(Team $team, TeamInvitation $invitation): RedirectResponse
+    {
+        abort_unless($invitation->team_id === $team->id, 404);
+
+        Gate::authorize('inviteMember', $team);
+
+        $invitation->update(['expires_at' => now()->addDays(3)]);
+
+        Notification::route('mail', $invitation->email)
+            ->notify(new TeamInvitationNotification($invitation));
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Invitation re-sent.')]);
+
+        return back();
     }
 
     /**
@@ -53,7 +72,7 @@ class TeamInvitationController extends Controller
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Invitation cancelled.')]);
 
-        return to_route('teams.edit', ['team' => $team->slug]);
+        return back();
     }
 
     /**
