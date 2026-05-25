@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\ExpenseCalculationType;
 use App\Models\DriverConfig;
 use App\Models\Team;
 use App\Models\TeamExpense;
@@ -23,18 +24,50 @@ class AnalyticsService
     public function weeklyReport(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): Collection
     {
         /** @var Collection<int, TeamExpense> $expenses */
-        $expenses = $team->expenses;
+        $expenses = $team->expenses->load('rates');
 
-        /** @var Collection<int, DriverConfig> $driverConfigs */
-        $driverConfigs = $team->driverConfigs->keyBy('external_driver_id');
+        /** @var Collection<int|string, DriverConfig> $driverConfigs */
+        $driverConfigs = $team->driverConfigs->load('rates')->keyBy('external_driver_id');
 
         $rows = $this->fetchRawData($team, $startDate, $endDate);
 
-        $driverRows = $rows->map(fn (object $row) => $this->computeRow($row, $driverConfigs, $expenses));
+        // Per-(driver, week) gross & miles, so salary and expenses can be summed
+        // week by week — each week resolving its own rate, and flat (weekly)
+        // expenses accumulating across the window.
+        $weeklyByDriver = $this->fetchWeeklyData($team, $startDate, $endDate)->groupBy('driver_id');
+
+        $windowWeeks = $this->windowWeeks($startDate, $endDate);
+
+        $driverRows = $rows->map(fn (object $row) => $this->computeRow(
+            $row,
+            $driverConfigs,
+            $expenses,
+            $weeklyByDriver->get($row->driver_id, collect()),
+            $windowWeeks,
+        ));
 
         $totals = $this->computeTotals($driverRows, $expenses);
 
         return $driverRows->push($totals);
+    }
+
+    /**
+     * Get the Monday of every ISO week that overlaps the report window.
+     *
+     * @return array<int, CarbonImmutable>
+     */
+    private function windowWeeks(Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): array
+    {
+        $weeks = [];
+        $cursor = CarbonImmutable::parse($startDate->toDateString())->startOfWeek();
+        $last = CarbonImmutable::parse($endDate->toDateString());
+
+        while ($cursor->lessThanOrEqualTo($last)) {
+            $weeks[] = $cursor;
+            $cursor = $cursor->addWeek();
+        }
+
+        return $weeks;
     }
 
     /**
@@ -206,13 +239,69 @@ class AnalyticsService
     }
 
     /**
+     * Fetch per-(driver, week) gross & miles from the analytics database.
+     *
+     * Buckets each board into the ISO week (Monday) of its start date; summed
+     * across weeks this equals the per-driver totals from fetchRawData.
+     *
+     * @return Collection<int, object>
+     */
+    private function fetchWeeklyData(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): Collection
+    {
+        $sql = <<<'SQL'
+            WITH week_boards AS (
+                SELECT
+                    gb.primary_driver_id,
+                    gb.rate,
+                    gb.miles,
+                    gb.start_date
+                FROM gross_boards gb
+                WHERE gb.is_deleted = FALSE
+                  AND gb.object_type IN ('LOAD', 'DRAFT')
+                  AND gb.company_id = :company_id
+                  AND (
+                      (
+                          gb.start_date >= :start_date
+                          AND gb.start_date <= :end_date
+                          AND (gb.end_date IS NULL OR gb.end_date <= :end_date_plus_one)
+                      )
+                      OR (
+                          gb.start_date >= :start_date_minus_seven
+                          AND gb.start_date < :start_date
+                          AND gb.end_date > :start_date
+                      )
+                  )
+            )
+            SELECT
+                wb.primary_driver_id AS driver_id,
+                date_trunc('week', wb.start_date)::date AS week_start,
+                ROUND(SUM(wb.rate)::numeric, 2) AS week_gross,
+                ROUND(SUM(wb.miles)::numeric, 2) AS week_miles
+            FROM week_boards wb
+            GROUP BY wb.primary_driver_id, date_trunc('week', wb.start_date)
+        SQL;
+
+        $results = DB::connection('analytics')->select($sql, [
+            'company_id' => $team->external_company_id,
+            'start_date' => $startDate->toDateString(),
+            'end_date' => $endDate->toDateString(),
+            'end_date_plus_one' => $endDate->copy()->addDay()->toDateString(),
+            'start_date_minus_seven' => $startDate->copy()->subDays(7)->toDateString(),
+        ]);
+
+        return collect($results);
+    }
+
+    /**
      * Compute the P&L row for a single driver.
      *
      * @param  Collection<int|string, DriverConfig>  $driverConfigs
      * @param  Collection<int, TeamExpense>  $expenses
+     * @param  Collection<int, object>  $weeklyBuckets  per-week gross/miles for this driver
+     * @param  array<int, CarbonImmutable>  $windowWeeks  Monday of each ISO week in the window
      * @return array<string, mixed>
      */
-    private function computeRow(object $row, Collection $driverConfigs, Collection $expenses): array
+    private function computeRow(object $row, Collection $driverConfigs, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks): array
     {
         $driverConfig = $driverConfigs->get($row->driver_id);
 
@@ -220,13 +309,18 @@ class AnalyticsService
         $miles = (float) $row->total_miles;
         $rpm = $miles > 0 ? round($gross / $miles, 2) : 0.0;
 
-        if (! $driverConfig) {
+        // A driver with no config — or whose tariff history never covers the
+        // window — is treated as unconfigured: we cannot compute their P&L.
+        $hasTariff = $driverConfig
+            && $weeklyBuckets->contains(fn (object $b) => $driverConfig->tariffRateAsOf(CarbonImmutable::parse($b->week_start)) !== null);
+
+        if (! $driverConfig || (! $hasTariff && $weeklyBuckets->isNotEmpty())) {
             return [
                 'driver_id' => $row->driver_id,
                 'driver_name' => $row->driver_name,
                 'dispatcher' => $row->dispatcher,
                 'truck_number' => $row->truck_number,
-                'type' => null,
+                'type' => $driverConfig?->contract_type->label(),
                 'days' => (int) $row->days,
                 'total_gross' => $gross,
                 'total_miles' => $miles,
@@ -240,37 +334,123 @@ class AnalyticsService
             ];
         }
 
-        $contractType = $driverConfig->contract_type;
-        $salary = $driverConfig->calculateSalary($gross, $miles, (bool) $row->is_team);
+        $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks);
 
-        // Compute each applicable expense keyed by name.
-        /** @var array<string, float> $computedExpenses */
-        $computedExpenses = [];
-        foreach ($expenses as $expense) {
-            if ($expense->appliesToDriver($contractType, $gross)) {
-                $computedExpenses[$expense->name] = $expense->calculate($gross, $miles);
-            }
-        }
-
-        $totalExpenses = round(array_sum($computedExpenses), 2);
-        $profitLoss = round($gross - $salary - $totalExpenses, 2);
+        $profitLoss = round($gross - $financials['salary'] - $financials['total_expenses'], 2);
 
         return [
             'driver_id' => $row->driver_id,
             'driver_name' => $row->driver_name,
             'dispatcher' => $row->dispatcher,
             'truck_number' => $row->truck_number,
-            'type' => $contractType->label(),
+            'type' => $driverConfig->contract_type->label(),
             'days' => (int) $row->days,
             'total_gross' => $gross,
             'total_miles' => $miles,
             'rpm' => $rpm,
-            'salary' => $salary,
-            'expenses' => $computedExpenses,
-            'total_expenses' => $totalExpenses,
+            'salary' => $financials['salary'],
+            'expenses' => $financials['expenses'],
+            'total_expenses' => $financials['total_expenses'],
             'profit_loss' => $profitLoss,
             'missing_config' => false,
             'is_total' => false,
+        ];
+    }
+
+    /**
+     * Compute salary and expenses for a driver by summing week by week.
+     *
+     * Salary and variable expenses (per-mile, % of gross) are computed on each
+     * data week's gross/miles using that week's rate. Flat expenses are weekly
+     * charges accrued once per ISO week in the window, so they scale with the
+     * period. `skip_when_no_gross` is evaluated per week, matching its intent.
+     *
+     * @param  Collection<int, TeamExpense>  $expenses
+     * @param  Collection<int, object>  $weeklyBuckets  per-week gross/miles for this driver
+     * @param  array<int, CarbonImmutable>  $windowWeeks  Monday of each ISO week in the window
+     * @return array{salary: float, expenses: array<string, float>, total_expenses: float}
+     */
+    public function computeFinancials(DriverConfig $driverConfig, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks): array
+    {
+        $contractType = $driverConfig->contract_type;
+
+        // Index this driver's weekly gross by ISO-week Monday for flat gating.
+        /** @var array<string, float> $grossByWeek */
+        $grossByWeek = $weeklyBuckets
+            ->mapWithKeys(fn (object $b) => [CarbonImmutable::parse($b->week_start)->toDateString() => (float) $b->week_gross])
+            ->all();
+
+        // Salary: sum each data week at that week's tariff.
+        $salary = 0.0;
+        foreach ($weeklyBuckets as $bucket) {
+            $weekStart = CarbonImmutable::parse($bucket->week_start);
+            $tariff = $driverConfig->tariffRateAsOf($weekStart);
+
+            if ($tariff !== null) {
+                $salary += $driverConfig->calculateSalary($tariff, (float) $bucket->week_gross, (float) $bucket->week_miles, false);
+            }
+        }
+        $salary = round($salary, 2);
+
+        /** @var array<string, float> $computedExpenses */
+        $computedExpenses = [];
+
+        foreach ($expenses as $expense) {
+            if (! $expense->appliesToContractType($contractType)) {
+                continue;
+            }
+
+            $amount = 0.0;
+            $charged = false;
+
+            if ($expense->calculation_type === ExpenseCalculationType::Flat) {
+                // Flat is a weekly charge: accrue once per ISO week in the window.
+                foreach ($windowWeeks as $weekStart) {
+                    $weekGross = $grossByWeek[$weekStart->toDateString()] ?? 0.0;
+
+                    if ($expense->skip_when_no_gross && $weekGross <= 0) {
+                        continue;
+                    }
+
+                    $rate = $expense->rateAsOf($weekStart);
+
+                    if ($rate === null) {
+                        continue;
+                    }
+
+                    $amount += $expense->calculate($rate, $weekGross, 0.0);
+                    $charged = true;
+                }
+            } else {
+                // Variable expenses scale with each data week's gross/miles.
+                foreach ($weeklyBuckets as $bucket) {
+                    $weekStart = CarbonImmutable::parse($bucket->week_start);
+                    $weekGross = (float) $bucket->week_gross;
+
+                    if ($expense->skip_when_no_gross && $weekGross <= 0) {
+                        continue;
+                    }
+
+                    $rate = $expense->rateAsOf($weekStart);
+
+                    if ($rate === null) {
+                        continue;
+                    }
+
+                    $amount += $expense->calculate($rate, $weekGross, (float) $bucket->week_miles);
+                    $charged = true;
+                }
+            }
+
+            if ($charged) {
+                $computedExpenses[$expense->name] = round($amount, 2);
+            }
+        }
+
+        return [
+            'salary' => $salary,
+            'expenses' => $computedExpenses,
+            'total_expenses' => round(array_sum($computedExpenses), 2),
         ];
     }
 

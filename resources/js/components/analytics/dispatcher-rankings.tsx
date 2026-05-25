@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
 import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import {
     Select,
     SelectContent,
@@ -8,20 +8,22 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { type Row } from './pnl-table';
+import type { Row } from './pnl-table';
 
 type SortKey = 'total_net' | 'avg_net' | 'total_gross' | 'avg_gross' | 'rpm';
 type Direction = 'asc' | 'desc';
 
 interface DispatcherRankingsProps {
     rows: Row[];
+    /** Whole weeks in the window; per-truck averages are divided by this. */
+    weeks: number;
 }
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
     { value: 'total_net', label: 'Total Net' },
-    { value: 'avg_net', label: 'Avg Net / Truck' },
+    { value: 'avg_net', label: 'Avg Net / Truck / wk' },
     { value: 'total_gross', label: 'Total Gross' },
-    { value: 'avg_gross', label: 'Avg Gross / Truck' },
+    { value: 'avg_gross', label: 'Avg Gross / Truck / wk' },
     { value: 'rpm', label: 'RPM' },
 ];
 
@@ -31,7 +33,7 @@ const fmtCurrency = (n: number) =>
 const fmtRpm = (n: number) =>
     `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function DispatcherRankings({ rows }: DispatcherRankingsProps) {
+export function DispatcherRankings({ rows, weeks }: DispatcherRankingsProps) {
     const [sortBy, setSortBy] = useState<SortKey>('total_net');
     const [direction, setDirection] = useState<Direction>('desc');
 
@@ -46,28 +48,46 @@ export function DispatcherRankings({ rows }: DispatcherRankingsProps) {
         const byDispatcher = new Map<string, Bucket>();
 
         for (const row of rows) {
-            if (row.is_total || row.missing_config) continue;
-            const disp = row.dispatcher || 'Unassigned';
-            if (!byDispatcher.has(disp)) {
-                byDispatcher.set(disp, { pl: 0, gross: 0, miles: 0, trucks: new Set(), drivers: new Set() });
+            if (row.is_total || row.missing_config) {
+                continue;
             }
+
+            const disp = row.dispatcher || 'Unassigned';
+
+            if (!byDispatcher.has(disp)) {
+                byDispatcher.set(disp, {
+                    pl: 0,
+                    gross: 0,
+                    miles: 0,
+                    trucks: new Set(),
+                    drivers: new Set(),
+                });
+            }
+
             const entry = byDispatcher.get(disp)!;
             entry.pl += row.profit_loss ?? 0;
             entry.gross += row.total_gross;
             entry.miles += row.total_miles;
-            if (row.truck_number) entry.trucks.add(row.truck_number);
-            if (row.driver_id != null) entry.drivers.add(row.driver_id);
+
+            if (row.truck_number) {
+                entry.trucks.add(row.truck_number);
+            }
+
+            if (row.driver_id != null) {
+                entry.drivers.add(row.driver_id);
+            }
         }
 
         const list = Array.from(byDispatcher.entries()).map(([name, b]) => {
             const truckCount = b.trucks.size || b.drivers.size || 1;
+
             return {
                 name,
                 trucks: b.trucks.size || b.drivers.size,
                 totalNet: b.pl,
                 totalGross: b.gross,
-                avgNet: b.pl / truckCount,
-                avgGross: b.gross / truckCount,
+                avgNet: b.pl / truckCount / weeks,
+                avgGross: b.gross / truckCount / weeks,
                 rpm: b.miles > 0 ? b.gross / b.miles : 0,
             };
         });
@@ -90,34 +110,50 @@ export function DispatcherRankings({ rows }: DispatcherRankingsProps) {
         return list.sort((a, b) => {
             const av = valueOf(a);
             const bv = valueOf(b);
+
             return direction === 'desc' ? bv - av : av - bv;
         });
-    }, [rows, sortBy, direction]);
+    }, [rows, sortBy, direction, weeks]);
 
     return (
         <div className="flex flex-col gap-2 rounded-xl border bg-card p-4 shadow-sm">
             <div className="mb-1 flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                <p className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
                     Dispatcher Rankings
                 </p>
                 <div className="flex items-center gap-1">
-                    <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortKey)}>
+                    <Select
+                        value={sortBy}
+                        onValueChange={(v) => setSortBy(v as SortKey)}
+                    >
                         <SelectTrigger className="h-7 w-auto gap-1.5 text-xs">
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent align="end">
                             {SORT_OPTIONS.map((opt) => (
-                                <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                                <SelectItem
+                                    key={opt.value}
+                                    value={opt.value}
+                                    className="text-xs"
+                                >
                                     {opt.label}
                                 </SelectItem>
                             ))}
                         </SelectContent>
                     </Select>
                     <button
-                        onClick={() => setDirection((d) => (d === 'desc' ? 'asc' : 'desc'))}
+                        onClick={() =>
+                            setDirection((d) => (d === 'desc' ? 'asc' : 'desc'))
+                        }
                         className="flex h-7 w-7 items-center justify-center rounded-md border text-muted-foreground transition-colors hover:bg-accent"
-                        aria-label={direction === 'desc' ? 'Sort descending' : 'Sort ascending'}
-                        title={direction === 'desc' ? 'Descending' : 'Ascending'}
+                        aria-label={
+                            direction === 'desc'
+                                ? 'Sort descending'
+                                : 'Sort ascending'
+                        }
+                        title={
+                            direction === 'desc' ? 'Descending' : 'Ascending'
+                        }
                     >
                         {direction === 'desc' ? (
                             <ArrowDownIcon className="h-3.5 w-3.5" />
@@ -133,9 +169,17 @@ export function DispatcherRankings({ rows }: DispatcherRankingsProps) {
                     No dispatcher activity in this period.
                 </div>
             ) : (
-                <div className="flex flex-col gap-1.5 overflow-y-auto pr-1" style={{ maxHeight: 320 }}>
+                <div
+                    className="flex flex-col gap-1.5 overflow-y-auto pr-1"
+                    style={{ maxHeight: 320 }}
+                >
                     {ranked.map((d, idx) => (
-                        <RankRow key={d.name} rank={idx + 1} dispatcher={d} sortBy={sortBy} />
+                        <RankRow
+                            key={d.name}
+                            rank={idx + 1}
+                            dispatcher={d}
+                            sortBy={sortBy}
+                        />
                     ))}
                 </div>
             )}
@@ -153,7 +197,15 @@ interface Ranked {
     rpm: number;
 }
 
-function RankRow({ rank, dispatcher: d, sortBy }: { rank: number; dispatcher: Ranked; sortBy: SortKey }) {
+function RankRow({
+    rank,
+    dispatcher: d,
+    sortBy,
+}: {
+    rank: number;
+    dispatcher: Ranked;
+    sortBy: SortKey;
+}) {
     const isNetFamily = sortBy === 'total_net' || sortBy === 'avg_net';
     const isGrossFamily = sortBy === 'total_gross' || sortBy === 'avg_gross';
 
@@ -165,7 +217,7 @@ function RankRow({ rank, dispatcher: d, sortBy }: { rank: number; dispatcher: Ra
         case 'total_net':
             primaryValue = d.totalNet;
             primary = fmtCurrency(d.totalNet);
-            subValue = `${fmtCurrency(d.avgNet)} Avg Net / Truck`;
+            subValue = `${fmtCurrency(d.avgNet)} Avg Net / Truck / wk`;
             break;
         case 'avg_net':
             primaryValue = d.avgNet;
@@ -175,7 +227,7 @@ function RankRow({ rank, dispatcher: d, sortBy }: { rank: number; dispatcher: Ra
         case 'total_gross':
             primaryValue = d.totalGross;
             primary = fmtCurrency(d.totalGross);
-            subValue = `${fmtCurrency(d.avgGross)} Avg Gross / Truck`;
+            subValue = `${fmtCurrency(d.avgGross)} Avg Gross / Truck / wk`;
             break;
         case 'avg_gross':
             primaryValue = d.avgGross;
@@ -206,8 +258,19 @@ function RankRow({ rank, dispatcher: d, sortBy }: { rank: number; dispatcher: Ra
                     <p className="truncate text-sm font-medium">{d.name}</p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end">
-                    <p className={cn('text-sm font-bold tabular-nums', primaryTone)}>{primary}</p>
-                    {subValue && <p className={cn('text-xs tabular-nums', subTone)}>{subValue}</p>}
+                    <p
+                        className={cn(
+                            'text-sm font-bold tabular-nums',
+                            primaryTone,
+                        )}
+                    >
+                        {primary}
+                    </p>
+                    {subValue && (
+                        <p className={cn('text-xs tabular-nums', subTone)}>
+                            {subValue}
+                        </p>
+                    )}
                 </div>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground tabular-nums">
@@ -216,10 +279,21 @@ function RankRow({ rank, dispatcher: d, sortBy }: { rank: number; dispatcher: Ra
                 </span>
                 {!isNetFamily && (
                     <span>
-                        Net <span className={d.totalNet >= 0 ? 'text-emerald-500' : 'text-red-500'}>{fmtCurrency(d.totalNet)}</span>
+                        Net{' '}
+                        <span
+                            className={
+                                d.totalNet >= 0
+                                    ? 'text-emerald-500'
+                                    : 'text-red-500'
+                            }
+                        >
+                            {fmtCurrency(d.totalNet)}
+                        </span>
                     </span>
                 )}
-                {!isGrossFamily && <span>Gross {fmtCurrency(d.totalGross)}</span>}
+                {!isGrossFamily && (
+                    <span>Gross {fmtCurrency(d.totalGross)}</span>
+                )}
                 {sortBy !== 'rpm' && <span>RPM {fmtRpm(d.rpm)}</span>}
             </div>
         </div>

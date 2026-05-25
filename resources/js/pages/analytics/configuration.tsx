@@ -1,14 +1,39 @@
 import { Head, router, usePage } from '@inertiajs/react';
+import { ReceiptText } from 'lucide-react';
 import { useId, useState } from 'react';
 import {
+    destroyDriverConfigRate,
     destroyExpense,
+    destroyExpenseRate,
     index as configurationIndex,
     storeDriverConfig,
+    storeDriverConfigRate,
     storeExpense,
+    storeExpenseRate,
     updateDriverConfig,
+    updateDriverConfigRate,
     updateExpense,
+    updateExpenseRate,
 } from '@/actions/App/Http/Controllers/Analytics/ConfigurationController';
+import { RateHistoryDialog } from '@/components/analytics/rate-history-dialog';
+import type { RateRow } from '@/components/analytics/rate-history-dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+    Empty,
+    EmptyDescription,
+    EmptyHeader,
+    EmptyMedia,
+    EmptyTitle,
+} from '@/components/ui/empty';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -33,29 +58,34 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
-import {
-    Dialog,
-    DialogContent,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
-} from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { Checkbox } from '@/components/ui/checkbox';
-import { ReceiptText } from 'lucide-react';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { WeekPicker, isoMonday } from '@/components/week-picker';
 
 type ContractType = { value: string; label: string };
 type CalculationType = { value: string; label: string };
+
+type DriverConfigRate = {
+    id: number;
+    tariff_rate: number;
+    effective_from: string;
+    effective_to: string | null;
+};
 
 type DriverConfig = {
     id: number;
     external_driver_id: number;
     driver_name: string;
     contract_type: string;
-    tariff_rate: number;
+    current_rate: number | null;
+    rates: DriverConfigRate[];
+};
+
+type ExpenseRate = {
+    id: number;
+    rate: number;
+    effective_from: string;
+    effective_to: string | null;
 };
 
 type TeamExpense = {
@@ -63,7 +93,8 @@ type TeamExpense = {
     name: string;
     description: string | null;
     calculation_type: string;
-    rate: number;
+    current_rate: number | null;
+    rates: ExpenseRate[];
     applies_to: string[] | null;
     skip_when_no_gross: boolean;
     sort_order: number;
@@ -76,6 +107,22 @@ type Props = {
     calculationTypes: CalculationType[];
 };
 
+// Rate mutations redirect back; keep the dialog open and the scroll position.
+const RATE_VISIT_OPTIONS = {
+    preserveScroll: true,
+    preserveState: true,
+} as const;
+
+const fmtTariff = (rate: number, contractType: string) =>
+    contractType === 'company_cpm'
+        ? rate.toString()
+        : `${(rate * 100).toFixed(2)}%`;
+
+const fmtExpenseRate = (rate: number, calculationType: string) =>
+    calculationType === 'percentage_of_gross'
+        ? `${(rate * 100).toFixed(2)}%`
+        : rate.toString();
+
 function SkipNoGrossCheckbox({
     checked,
     onChange,
@@ -84,14 +131,19 @@ function SkipNoGrossCheckbox({
     onChange: (v: boolean) => void;
 }) {
     const id = useId();
+
     return (
         <div className="relative flex w-full items-start gap-2 rounded-md border border-input p-3 shadow-xs outline-none has-data-[state=checked]:border-primary/50">
             <div className="grid grow gap-1">
                 <Label htmlFor={id} className="cursor-pointer">
                     Skip when driver has $0 gross
                 </Label>
-                <p className="text-xs text-muted-foreground" id={`${id}-description`}>
-                    Don't charge this expense to drivers who didn't run any loads that week.
+                <p
+                    className="text-xs text-muted-foreground"
+                    id={`${id}-description`}
+                >
+                    Don't charge this expense to drivers who didn't run any
+                    loads that week.
                 </p>
             </div>
             <Checkbox
@@ -110,10 +162,13 @@ const emptyExpense = {
     description: '',
     calculation_type: 'flat',
     rate: '',
+    effective_from: isoMonday(),
     applies_to: [] as string[],
     skip_when_no_gross: false,
     sort_order: 0,
 };
+
+type RateDialogTarget = { kind: 'driver' | 'expense'; id: number };
 
 export default function Configuration({
     driverConfigs,
@@ -133,8 +188,15 @@ export default function Configuration({
         driverPage * driverPageSize,
     );
 
-    const emptyDriverConfig = { external_driver_id: '', contract_type: contractTypes[0]?.value ?? '', tariff_rate: '' };
-    const [newDriverConfig, setNewDriverConfig] = useState({ ...emptyDriverConfig });
+    const emptyDriverConfig = {
+        external_driver_id: '',
+        contract_type: contractTypes[0]?.value ?? '',
+        tariff_rate: '',
+        effective_from: isoMonday(),
+    };
+    const [newDriverConfig, setNewDriverConfig] = useState({
+        ...emptyDriverConfig,
+    });
     const [addDriverOpen, setAddDriverOpen] = useState(false);
 
     function submitNewDriverConfig(e: React.FormEvent) {
@@ -142,9 +204,12 @@ export default function Configuration({
         router[storeDriverConfig(slug).method](
             storeDriverConfig.url(slug),
             {
-                external_driver_id: parseInt(newDriverConfig.external_driver_id as string),
+                external_driver_id: parseInt(
+                    newDriverConfig.external_driver_id as string,
+                ),
                 contract_type: newDriverConfig.contract_type,
                 tariff_rate: parseFloat(newDriverConfig.tariff_rate as string),
+                effective_from: newDriverConfig.effective_from,
             },
             {
                 onSuccess: () => {
@@ -158,25 +223,23 @@ export default function Configuration({
     const [editingDriver, setEditingDriver] = useState<{
         id: number;
         contract_type: string;
-        tariff_rate: string;
     } | null>(null);
 
     function startEditDriver(dc: DriverConfig) {
         setEditingDriver({
             id: dc.id,
             contract_type: dc.contract_type,
-            tariff_rate: String(dc.tariff_rate),
         });
     }
 
     function saveDriver() {
-        if (!editingDriver) return;
+        if (!editingDriver) {
+            return;
+        }
+
         router[updateDriverConfig([slug, editingDriver.id]).method](
             updateDriverConfig.url([slug, editingDriver.id]),
-            {
-                contract_type: editingDriver.contract_type,
-                tariff_rate: parseFloat(editingDriver.tariff_rate),
-            },
+            { contract_type: editingDriver.contract_type },
             { onSuccess: () => setEditingDriver(null) },
         );
     }
@@ -184,9 +247,9 @@ export default function Configuration({
     // --- Team Expense Editing ---
     const [newExpense, setNewExpense] = useState({ ...emptyExpense });
     const [addExpenseOpen, setAddExpenseOpen] = useState(false);
-    const [editingExpense, setEditingExpense] = useState<
-        (TeamExpense & { rate: string }) | null
-    >(null);
+    const [editingExpense, setEditingExpense] = useState<TeamExpense | null>(
+        null,
+    );
 
     function submitNewExpense(e: React.FormEvent) {
         e.preventDefault();
@@ -203,7 +266,10 @@ export default function Configuration({
             },
             {
                 onSuccess: () => {
-                    setNewExpense({ ...emptyExpense });
+                    setNewExpense({
+                        ...emptyExpense,
+                        effective_from: isoMonday(),
+                    });
                     setAddExpenseOpen(false);
                 },
             },
@@ -211,14 +277,16 @@ export default function Configuration({
     }
 
     function saveExpense() {
-        if (!editingExpense) return;
+        if (!editingExpense) {
+            return;
+        }
+
         router[updateExpense([slug, editingExpense.id]).method](
             updateExpense.url([slug, editingExpense.id]),
             {
                 name: editingExpense.name,
                 description: editingExpense.description,
                 calculation_type: editingExpense.calculation_type,
-                rate: parseFloat(editingExpense.rate as string),
                 applies_to:
                     editingExpense.applies_to &&
                     editingExpense.applies_to.length > 0
@@ -232,8 +300,101 @@ export default function Configuration({
     }
 
     function deleteExpense(id: number) {
-        if (!confirm('Delete this expense?')) return;
-        router[destroyExpense([slug, id]).method](destroyExpense.url([slug, id]));
+        if (!confirm('Delete this expense?')) {
+            return;
+        }
+
+        router[destroyExpense([slug, id]).method](
+            destroyExpense.url([slug, id]),
+        );
+    }
+
+    // --- Rate history dialog ---
+    const [rateTarget, setRateTarget] = useState<RateDialogTarget | null>(null);
+
+    const activeDriver =
+        rateTarget?.kind === 'driver'
+            ? (driverConfigs.find((dc) => dc.id === rateTarget.id) ?? null)
+            : null;
+    const activeExpense =
+        rateTarget?.kind === 'expense'
+            ? (expenses.find((e) => e.id === rateTarget.id) ?? null)
+            : null;
+
+    function addDriverRate(
+        driverId: number,
+        rate: number,
+        effectiveFrom: string,
+        effectiveTo: string | null,
+    ) {
+        router[storeDriverConfigRate([slug, driverId]).method](
+            storeDriverConfigRate.url([slug, driverId]),
+            {
+                tariff_rate: rate,
+                effective_from: effectiveFrom,
+                effective_to: effectiveTo,
+            },
+            RATE_VISIT_OPTIONS,
+        );
+    }
+
+    function updateDriverRate(
+        driverId: number,
+        rateId: number,
+        rate: number,
+        effectiveFrom: string,
+        effectiveTo: string | null,
+    ) {
+        router[updateDriverConfigRate([slug, driverId, rateId]).method](
+            updateDriverConfigRate.url([slug, driverId, rateId]),
+            {
+                tariff_rate: rate,
+                effective_from: effectiveFrom,
+                effective_to: effectiveTo,
+            },
+            RATE_VISIT_OPTIONS,
+        );
+    }
+
+    function deleteDriverRate(driverId: number, rateId: number) {
+        router[destroyDriverConfigRate([slug, driverId, rateId]).method](
+            destroyDriverConfigRate.url([slug, driverId, rateId]),
+            RATE_VISIT_OPTIONS,
+        );
+    }
+
+    function addExpenseRate(
+        expenseId: number,
+        rate: number,
+        effectiveFrom: string,
+        effectiveTo: string | null,
+    ) {
+        router[storeExpenseRate([slug, expenseId]).method](
+            storeExpenseRate.url([slug, expenseId]),
+            { rate, effective_from: effectiveFrom, effective_to: effectiveTo },
+            RATE_VISIT_OPTIONS,
+        );
+    }
+
+    function updateExpenseRateValue(
+        expenseId: number,
+        rateId: number,
+        rate: number,
+        effectiveFrom: string,
+        effectiveTo: string | null,
+    ) {
+        router[updateExpenseRate([slug, expenseId, rateId]).method](
+            updateExpenseRate.url([slug, expenseId, rateId]),
+            { rate, effective_from: effectiveFrom, effective_to: effectiveTo },
+            RATE_VISIT_OPTIONS,
+        );
+    }
+
+    function deleteExpenseRate(expenseId: number, rateId: number) {
+        router[destroyExpenseRate([slug, expenseId, rateId]).method](
+            destroyExpenseRate.url([slug, expenseId, rateId]),
+            RATE_VISIT_OPTIONS,
+        );
     }
 
     return (
@@ -259,28 +420,41 @@ export default function Configuration({
                     {/* Driver Contracts Tab */}
                     <TabsContent value="drivers" className="mt-4">
                         <div className="mb-4 flex justify-end">
-                            <Dialog open={addDriverOpen} onOpenChange={setAddDriverOpen}>
+                            <Dialog
+                                open={addDriverOpen}
+                                onOpenChange={setAddDriverOpen}
+                            >
                                 <DialogTrigger asChild>
                                     <Button size="sm">Add Driver Config</Button>
                                 </DialogTrigger>
                                 <DialogContent>
                                     <DialogHeader>
-                                        <DialogTitle>Add Driver Config</DialogTitle>
+                                        <DialogTitle>
+                                            Add Driver Config
+                                        </DialogTitle>
                                     </DialogHeader>
-                                    <form id="add-driver-config-form" onSubmit={submitNewDriverConfig}>
+                                    <form
+                                        id="add-driver-config-form"
+                                        onSubmit={submitNewDriverConfig}
+                                    >
                                         <div className="flex flex-col gap-4">
                                             <div className="flex flex-col gap-1">
-                                                <Label htmlFor="dc-driver-id">Driver ID</Label>
+                                                <Label htmlFor="dc-driver-id">
+                                                    Driver ID
+                                                </Label>
                                                 <Input
                                                     id="dc-driver-id"
                                                     type="number"
                                                     min="1"
                                                     required
-                                                    value={newDriverConfig.external_driver_id}
+                                                    value={
+                                                        newDriverConfig.external_driver_id
+                                                    }
                                                     onChange={(e) =>
                                                         setNewDriverConfig({
                                                             ...newDriverConfig,
-                                                            external_driver_id: e.target.value,
+                                                            external_driver_id:
+                                                                e.target.value,
                                                         })
                                                     }
                                                     placeholder="e.g. 42"
@@ -288,13 +462,18 @@ export default function Configuration({
                                             </div>
                                             <div className="flex gap-4">
                                                 <div className="flex flex-1 flex-col gap-1">
-                                                    <Label htmlFor="dc-contract-type">Contract Type</Label>
+                                                    <Label htmlFor="dc-contract-type">
+                                                        Contract Type
+                                                    </Label>
                                                     <Select
-                                                        value={newDriverConfig.contract_type}
+                                                        value={
+                                                            newDriverConfig.contract_type
+                                                        }
                                                         onValueChange={(v) =>
                                                             setNewDriverConfig({
                                                                 ...newDriverConfig,
-                                                                contract_type: v,
+                                                                contract_type:
+                                                                    v,
                                                             })
                                                         }
                                                     >
@@ -302,42 +481,93 @@ export default function Configuration({
                                                             <SelectValue />
                                                         </SelectTrigger>
                                                         <SelectContent>
-                                                            {contractTypes.map((ct) => (
-                                                                <SelectItem key={ct.value} value={ct.value}>
-                                                                    {ct.label}
-                                                                </SelectItem>
-                                                            ))}
+                                                            {contractTypes.map(
+                                                                (ct) => (
+                                                                    <SelectItem
+                                                                        key={
+                                                                            ct.value
+                                                                        }
+                                                                        value={
+                                                                            ct.value
+                                                                        }
+                                                                    >
+                                                                        {
+                                                                            ct.label
+                                                                        }
+                                                                    </SelectItem>
+                                                                ),
+                                                            )}
                                                         </SelectContent>
                                                     </Select>
                                                 </div>
                                                 <div className="flex w-32 flex-col gap-1">
-                                                    <Label htmlFor="dc-rate">Rate</Label>
+                                                    <Label htmlFor="dc-rate">
+                                                        Rate
+                                                    </Label>
                                                     <Input
                                                         id="dc-rate"
                                                         type="number"
-                                                        step={newDriverConfig.contract_type === 'company_cpm' ? '0.01' : '0.001'}
+                                                        step={
+                                                            newDriverConfig.contract_type ===
+                                                            'company_cpm'
+                                                                ? '0.01'
+                                                                : '0.001'
+                                                        }
                                                         min="0"
                                                         required
-                                                        value={newDriverConfig.tariff_rate}
+                                                        value={
+                                                            newDriverConfig.tariff_rate
+                                                        }
                                                         onChange={(e) =>
                                                             setNewDriverConfig({
                                                                 ...newDriverConfig,
-                                                                tariff_rate: e.target.value,
+                                                                tariff_rate:
+                                                                    e.target
+                                                                        .value,
                                                             })
                                                         }
-                                                        placeholder={newDriverConfig.contract_type === 'company_cpm' ? '0.65' : '0.30'}
+                                                        placeholder={
+                                                            newDriverConfig.contract_type ===
+                                                            'company_cpm'
+                                                                ? '0.65'
+                                                                : '0.30'
+                                                        }
                                                     />
-                                                    {newDriverConfig.contract_type !== 'company_cpm' && (
+                                                    {newDriverConfig.contract_type !==
+                                                        'company_cpm' && (
                                                         <span className="text-xs text-muted-foreground">
-                                                            e.g. <strong>0.30</strong> = 30%
+                                                            e.g.{' '}
+                                                            <strong>
+                                                                0.30
+                                                            </strong>{' '}
+                                                            = 30%
                                                         </span>
                                                     )}
                                                 </div>
                                             </div>
+                                            <div className="flex flex-col gap-1">
+                                                <Label>Effective from</Label>
+                                                <WeekPicker
+                                                    value={
+                                                        newDriverConfig.effective_from
+                                                    }
+                                                    onChange={(v) =>
+                                                        setNewDriverConfig({
+                                                            ...newDriverConfig,
+                                                            effective_from: v,
+                                                        })
+                                                    }
+                                                />
+                                            </div>
                                         </div>
                                     </form>
                                     <DialogFooter>
-                                        <Button type="submit" form="add-driver-config-form">Add Config</Button>
+                                        <Button
+                                            type="submit"
+                                            form="add-driver-config-form"
+                                        >
+                                            Add Config
+                                        </Button>
                                     </DialogFooter>
                                 </DialogContent>
                             </Dialog>
@@ -349,7 +579,7 @@ export default function Configuration({
                                     <TableRow>
                                         <TableHead>Driver</TableHead>
                                         <TableHead>Contract Type</TableHead>
-                                        <TableHead>Rate</TableHead>
+                                        <TableHead>Current Rate</TableHead>
                                         <TableHead></TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -357,6 +587,7 @@ export default function Configuration({
                                     {pagedDriverConfigs.map((dc) => {
                                         const isEditing =
                                             editingDriver?.id === dc.id;
+
                                         return (
                                             <TableRow key={dc.id}>
                                                 <TableCell className="font-medium">
@@ -411,30 +642,13 @@ export default function Configuration({
                                                         dc.contract_type)
                                                     )}
                                                 </TableCell>
-                                                <TableCell>
-                                                    {isEditing ? (
-                                                        <Input
-                                                            type="number"
-                                                            step="0.01"
-                                                            className="w-28"
-                                                            value={
-                                                                editingDriver.tariff_rate
-                                                            }
-                                                            onChange={(e) =>
-                                                                setEditingDriver(
-                                                                    {
-                                                                        ...editingDriver,
-                                                                        tariff_rate:
-                                                                            e
-                                                                                .target
-                                                                                .value,
-                                                                    },
-                                                                )
-                                                            }
-                                                        />
-                                                    ) : (
-                                                        dc.tariff_rate
-                                                    )}
+                                                <TableCell className="tabular-nums">
+                                                    {dc.current_rate != null
+                                                        ? fmtTariff(
+                                                              dc.current_rate,
+                                                              dc.contract_type,
+                                                          )
+                                                        : '—'}
                                                 </TableCell>
                                                 <TableCell className="text-right">
                                                     {isEditing ? (
@@ -460,17 +674,33 @@ export default function Configuration({
                                                             </Button>
                                                         </div>
                                                     ) : (
-                                                        <Button
-                                                            size="sm"
-                                                            variant="outline"
-                                                            onClick={() =>
-                                                                startEditDriver(
-                                                                    dc,
-                                                                )
-                                                            }
-                                                        >
-                                                            Edit
-                                                        </Button>
+                                                        <div className="flex justify-end gap-2">
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={() =>
+                                                                    setRateTarget(
+                                                                        {
+                                                                            kind: 'driver',
+                                                                            id: dc.id,
+                                                                        },
+                                                                    )
+                                                                }
+                                                            >
+                                                                Rates
+                                                            </Button>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={() =>
+                                                                    startEditDriver(
+                                                                        dc,
+                                                                    )
+                                                                }
+                                                            >
+                                                                Edit
+                                                            </Button>
+                                                        </div>
                                                     )}
                                                 </TableCell>
                                             </TableRow>
@@ -567,7 +797,10 @@ export default function Configuration({
                         className="mt-4 flex flex-col gap-4"
                     >
                         <div className="flex justify-end">
-                            <Dialog open={addExpenseOpen} onOpenChange={setAddExpenseOpen}>
+                            <Dialog
+                                open={addExpenseOpen}
+                                onOpenChange={setAddExpenseOpen}
+                            >
                                 <DialogTrigger asChild>
                                     <Button size="sm">Add Expense</Button>
                                 </DialogTrigger>
@@ -575,10 +808,15 @@ export default function Configuration({
                                     <DialogHeader>
                                         <DialogTitle>Add Expense</DialogTitle>
                                     </DialogHeader>
-                                    <form id="add-expense-form" onSubmit={submitNewExpense}>
+                                    <form
+                                        id="add-expense-form"
+                                        onSubmit={submitNewExpense}
+                                    >
                                         <div className="grid gap-4 sm:grid-cols-2">
                                             <div className="flex flex-col gap-1">
-                                                <Label htmlFor="exp-name">Name</Label>
+                                                <Label htmlFor="exp-name">
+                                                    Name
+                                                </Label>
                                                 <Input
                                                     id="exp-name"
                                                     required
@@ -586,7 +824,8 @@ export default function Configuration({
                                                     onChange={(e) =>
                                                         setNewExpense({
                                                             ...newExpense,
-                                                            name: e.target.value,
+                                                            name: e.target
+                                                                .value,
                                                         })
                                                     }
                                                     placeholder="e.g. Fuel Surcharge"
@@ -597,7 +836,9 @@ export default function Configuration({
                                                     Calculation Type
                                                 </Label>
                                                 <Select
-                                                    value={newExpense.calculation_type}
+                                                    value={
+                                                        newExpense.calculation_type
+                                                    }
                                                     onValueChange={(v) =>
                                                         setNewExpense({
                                                             ...newExpense,
@@ -609,19 +850,27 @@ export default function Configuration({
                                                         <SelectValue />
                                                     </SelectTrigger>
                                                     <SelectContent>
-                                                        {calculationTypes.map((ct) => (
-                                                            <SelectItem
-                                                                key={ct.value}
-                                                                value={ct.value}
-                                                            >
-                                                                {ct.label}
-                                                            </SelectItem>
-                                                        ))}
+                                                        {calculationTypes.map(
+                                                            (ct) => (
+                                                                <SelectItem
+                                                                    key={
+                                                                        ct.value
+                                                                    }
+                                                                    value={
+                                                                        ct.value
+                                                                    }
+                                                                >
+                                                                    {ct.label}
+                                                                </SelectItem>
+                                                            ),
+                                                        )}
                                                     </SelectContent>
                                                 </Select>
                                             </div>
                                             <div className="flex flex-col gap-1">
-                                                <Label htmlFor="exp-rate">Rate</Label>
+                                                <Label htmlFor="exp-rate">
+                                                    Rate
+                                                </Label>
                                                 <Input
                                                     id="exp-rate"
                                                     type="number"
@@ -636,7 +885,8 @@ export default function Configuration({
                                                     onChange={(e) =>
                                                         setNewExpense({
                                                             ...newExpense,
-                                                            rate: e.target.value,
+                                                            rate: e.target
+                                                                .value,
                                                         })
                                                     }
                                                     placeholder={
@@ -650,16 +900,32 @@ export default function Configuration({
                                                     'percentage_of_gross' && (
                                                     <span className="text-xs text-muted-foreground">
                                                         Enter as decimal — e.g.{' '}
-                                                        <strong>0.026</strong> = 2.6%
+                                                        <strong>0.026</strong> =
+                                                        2.6%
                                                     </span>
                                                 )}
                                                 {newExpense.calculation_type ===
                                                     'per_mile' && (
                                                     <span className="text-xs text-muted-foreground">
-                                                        e.g. <strong>0.20</strong> =
+                                                        e.g.{' '}
+                                                        <strong>0.20</strong> =
                                                         20¢/mile
                                                     </span>
                                                 )}
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                                <Label>Effective from</Label>
+                                                <WeekPicker
+                                                    value={
+                                                        newExpense.effective_from
+                                                    }
+                                                    onChange={(v) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            effective_from: v,
+                                                        })
+                                                    }
+                                                />
                                             </div>
                                             <div className="flex flex-col gap-1 sm:col-span-2">
                                                 <Label htmlFor="exp-desc">
@@ -667,11 +933,14 @@ export default function Configuration({
                                                 </Label>
                                                 <Input
                                                     id="exp-desc"
-                                                    value={newExpense.description}
+                                                    value={
+                                                        newExpense.description
+                                                    }
                                                     onChange={(e) =>
                                                         setNewExpense({
                                                             ...newExpense,
-                                                            description: e.target.value,
+                                                            description:
+                                                                e.target.value,
                                                         })
                                                     }
                                                 />
@@ -687,7 +956,9 @@ export default function Configuration({
                                                     type="multiple"
                                                     variant="outline"
                                                     className="justify-start"
-                                                    value={newExpense.applies_to}
+                                                    value={
+                                                        newExpense.applies_to
+                                                    }
                                                     onValueChange={(v) =>
                                                         setNewExpense({
                                                             ...newExpense,
@@ -707,11 +978,14 @@ export default function Configuration({
                                             </div>
                                             <div className="sm:col-span-2">
                                                 <SkipNoGrossCheckbox
-                                                    checked={newExpense.skip_when_no_gross}
+                                                    checked={
+                                                        newExpense.skip_when_no_gross
+                                                    }
                                                     onChange={(v) =>
                                                         setNewExpense({
                                                             ...newExpense,
-                                                            skip_when_no_gross: v,
+                                                            skip_when_no_gross:
+                                                                v,
                                                         })
                                                     }
                                                 />
@@ -719,7 +993,10 @@ export default function Configuration({
                                         </div>
                                     </form>
                                     <DialogFooter>
-                                        <Button type="submit" form="add-expense-form">
+                                        <Button
+                                            type="submit"
+                                            form="add-expense-form"
+                                        >
                                             Add Expense
                                         </Button>
                                     </DialogFooter>
@@ -734,7 +1011,7 @@ export default function Configuration({
                                         <TableRow>
                                             <TableHead>Name</TableHead>
                                             <TableHead>Type</TableHead>
-                                            <TableHead>Rate</TableHead>
+                                            <TableHead>Current Rate</TableHead>
                                             <TableHead>Applies To</TableHead>
                                             <TableHead></TableHead>
                                         </TableRow>
@@ -743,6 +1020,7 @@ export default function Configuration({
                                         {expenses.map((exp) => {
                                             const isEditing =
                                                 editingExpense?.id === exp.id;
+
                                             return (
                                                 <TableRow key={exp.id}>
                                                     <TableCell>
@@ -817,57 +1095,14 @@ export default function Configuration({
                                                             exp.calculation_type)
                                                         )}
                                                     </TableCell>
-                                                    <TableCell>
-                                                        {isEditing ? (
-                                                            <div className="flex flex-col gap-1">
-                                                                <Input
-                                                                    type="number"
-                                                                    step={
-                                                                        editingExpense.calculation_type ===
-                                                                        'percentage_of_gross'
-                                                                            ? '0.001'
-                                                                            : '0.01'
-                                                                    }
-                                                                    className="w-28"
-                                                                    value={
-                                                                        editingExpense.rate
-                                                                    }
-                                                                    onChange={(
-                                                                        e,
-                                                                    ) =>
-                                                                        setEditingExpense(
-                                                                            {
-                                                                                ...editingExpense,
-                                                                                rate: e
-                                                                                    .target
-                                                                                    .value,
-                                                                            },
-                                                                        )
-                                                                    }
-                                                                />
-                                                                {editingExpense.calculation_type ===
-                                                                    'percentage_of_gross' && (
-                                                                    <span className="text-xs text-muted-foreground">
-                                                                        e.g.
-                                                                        0.026 =
-                                                                        2.6%
-                                                                    </span>
-                                                                )}
-                                                                {editingExpense.calculation_type ===
-                                                                    'per_mile' && (
-                                                                    <span className="text-xs text-muted-foreground">
-                                                                        e.g.
-                                                                        0.20 =
-                                                                        20¢/mile
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                        ) : exp.calculation_type ===
-                                                          'percentage_of_gross' ? (
-                                                            `${(exp.rate * 100).toFixed(2)}%`
-                                                        ) : (
-                                                            exp.rate
-                                                        )}
+                                                    <TableCell className="tabular-nums">
+                                                        {exp.current_rate !=
+                                                        null
+                                                            ? fmtExpenseRate(
+                                                                  exp.current_rate,
+                                                                  exp.calculation_type,
+                                                              )
+                                                            : '—'}
                                                     </TableCell>
                                                     <TableCell className="text-sm text-muted-foreground">
                                                         {isEditing ? (
@@ -928,35 +1163,66 @@ export default function Configuration({
                                                                 </span>
                                                                 <label className="mt-1 flex cursor-pointer items-start gap-2 text-xs font-normal">
                                                                     <Checkbox
-                                                                        checked={editingExpense.skip_when_no_gross}
-                                                                        onCheckedChange={(v) =>
-                                                                            setEditingExpense({
-                                                                                ...editingExpense,
-                                                                                skip_when_no_gross: v === true,
-                                                                            })
+                                                                        checked={
+                                                                            editingExpense.skip_when_no_gross
+                                                                        }
+                                                                        onCheckedChange={(
+                                                                            v,
+                                                                        ) =>
+                                                                            setEditingExpense(
+                                                                                {
+                                                                                    ...editingExpense,
+                                                                                    skip_when_no_gross:
+                                                                                        v ===
+                                                                                        true,
+                                                                                },
+                                                                            )
                                                                         }
                                                                         className="mt-0.5"
                                                                     />
-                                                                    <span>Skip when driver has $0 gross</span>
+                                                                    <span>
+                                                                        Skip
+                                                                        when
+                                                                        driver
+                                                                        has $0
+                                                                        gross
+                                                                    </span>
                                                                 </label>
                                                             </div>
                                                         ) : (
                                                             <span className="flex flex-col gap-0.5">
                                                                 <span>
-                                                                    {exp.applies_to && exp.applies_to.length > 0
+                                                                    {exp.applies_to &&
+                                                                    exp
+                                                                        .applies_to
+                                                                        .length >
+                                                                        0
                                                                         ? exp.applies_to
                                                                               .map(
-                                                                                  (v) =>
+                                                                                  (
+                                                                                      v,
+                                                                                  ) =>
                                                                                       contractTypes.find(
-                                                                                          (ct) => ct.value === v,
-                                                                                      )?.label ?? v,
+                                                                                          (
+                                                                                              ct,
+                                                                                          ) =>
+                                                                                              ct.value ===
+                                                                                              v,
+                                                                                      )
+                                                                                          ?.label ??
+                                                                                      v,
                                                                               )
-                                                                              .join(', ')
+                                                                              .join(
+                                                                                  ', ',
+                                                                              )
                                                                         : 'All'}
                                                                 </span>
                                                                 {exp.skip_when_no_gross && (
                                                                     <span className="text-xs text-amber-600 dark:text-amber-500">
-                                                                        Skips drivers with $0 gross
+                                                                        Skips
+                                                                        drivers
+                                                                        with $0
+                                                                        gross
                                                                     </span>
                                                                 )}
                                                             </span>
@@ -991,12 +1257,23 @@ export default function Configuration({
                                                                     size="sm"
                                                                     variant="outline"
                                                                     onClick={() =>
+                                                                        setRateTarget(
+                                                                            {
+                                                                                kind: 'expense',
+                                                                                id: exp.id,
+                                                                            },
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    Rates
+                                                                </Button>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    onClick={() =>
                                                                         setEditingExpense(
                                                                             {
                                                                                 ...exp,
-                                                                                rate: String(
-                                                                                    exp.rate,
-                                                                                ),
                                                                             },
                                                                         )
                                                                     }
@@ -1031,7 +1308,8 @@ export default function Configuration({
                                     </EmptyMedia>
                                     <EmptyTitle>No team expenses</EmptyTitle>
                                     <EmptyDescription>
-                                        Add your first expense to start tracking team costs.
+                                        Add your first expense to start tracking
+                                        team costs.
                                     </EmptyDescription>
                                 </EmptyHeader>
                             </Empty>
@@ -1039,6 +1317,88 @@ export default function Configuration({
                     </TabsContent>
                 </Tabs>
             </div>
+
+            {activeDriver && (
+                <RateHistoryDialog
+                    open
+                    onOpenChange={(open) => !open && setRateTarget(null)}
+                    title={`${activeDriver.driver_name} — tariff history`}
+                    rates={activeDriver.rates.map(
+                        (r): RateRow => ({
+                            id: r.id,
+                            rate: r.tariff_rate,
+                            effective_from: r.effective_from,
+                            effective_to: r.effective_to,
+                        }),
+                    )}
+                    rateLabel="Tariff"
+                    rateStep={
+                        activeDriver.contract_type === 'company_cpm'
+                            ? '0.01'
+                            : '0.001'
+                    }
+                    rateHelp={
+                        activeDriver.contract_type !== 'company_cpm'
+                            ? 'Enter as a decimal — e.g. 0.30 = 30% of gross.'
+                            : 'Dollars per mile — e.g. 0.65.'
+                    }
+                    formatRate={(rate) =>
+                        fmtTariff(rate, activeDriver.contract_type)
+                    }
+                    onAdd={(rate, eff, to) =>
+                        addDriverRate(activeDriver.id, rate, eff, to)
+                    }
+                    onUpdate={(id, rate, eff, to) =>
+                        updateDriverRate(activeDriver.id, id, rate, eff, to)
+                    }
+                    onDelete={(id) => deleteDriverRate(activeDriver.id, id)}
+                />
+            )}
+
+            {activeExpense && (
+                <RateHistoryDialog
+                    open
+                    onOpenChange={(open) => !open && setRateTarget(null)}
+                    title={`${activeExpense.name} — rate history`}
+                    rates={activeExpense.rates.map(
+                        (r): RateRow => ({
+                            id: r.id,
+                            rate: r.rate,
+                            effective_from: r.effective_from,
+                            effective_to: r.effective_to,
+                        }),
+                    )}
+                    rateLabel="Rate"
+                    rateStep={
+                        activeExpense.calculation_type === 'percentage_of_gross'
+                            ? '0.001'
+                            : '0.01'
+                    }
+                    rateHelp={
+                        activeExpense.calculation_type === 'percentage_of_gross'
+                            ? 'Enter as a decimal — e.g. 0.026 = 2.6% of gross.'
+                            : activeExpense.calculation_type === 'per_mile'
+                              ? 'e.g. 0.20 = 20¢/mile.'
+                              : undefined
+                    }
+                    formatRate={(rate) =>
+                        fmtExpenseRate(rate, activeExpense.calculation_type)
+                    }
+                    onAdd={(rate, eff, to) =>
+                        addExpenseRate(activeExpense.id, rate, eff, to)
+                    }
+                    onUpdate={(id, rate, eff, to) =>
+                        updateExpenseRateValue(
+                            activeExpense.id,
+                            id,
+                            rate,
+                            eff,
+                            to,
+                        )
+                    }
+                    onDelete={(id) => deleteExpenseRate(activeExpense.id, id)}
+                />
+            )}
         </>
     );
 }
@@ -1053,4 +1413,3 @@ Configuration.layout = (props: { currentTeam?: { slug: string } | null }) => ({
         },
     ],
 });
-

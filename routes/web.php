@@ -20,11 +20,19 @@ Route::prefix('{current_team}')
         Route::get('analytics', [AnalyticsController::class, 'index'])->name('analytics.index');
 
         Route::get('configuration', [ConfigurationController::class, 'index'])->name('configuration.index');
+
         Route::post('configuration/driver-configs', [ConfigurationController::class, 'storeDriverConfig'])->name('configuration.driver-configs.store');
         Route::patch('configuration/driver-configs/{driverConfig}', [ConfigurationController::class, 'updateDriverConfig'])->name('configuration.driver-configs.update');
+        Route::post('configuration/driver-configs/{driverConfig}/rates', [ConfigurationController::class, 'storeDriverConfigRate'])->name('configuration.driver-configs.rates.store');
+        Route::patch('configuration/driver-configs/{driverConfig}/rates/{driverConfigRate}', [ConfigurationController::class, 'updateDriverConfigRate'])->name('configuration.driver-configs.rates.update');
+        Route::delete('configuration/driver-configs/{driverConfig}/rates/{driverConfigRate}', [ConfigurationController::class, 'destroyDriverConfigRate'])->name('configuration.driver-configs.rates.destroy');
+
         Route::post('configuration/expenses', [ConfigurationController::class, 'storeExpense'])->name('configuration.expenses.store');
         Route::patch('configuration/expenses/{teamExpense}', [ConfigurationController::class, 'updateExpense'])->name('configuration.expenses.update');
         Route::delete('configuration/expenses/{teamExpense}', [ConfigurationController::class, 'destroyExpense'])->name('configuration.expenses.destroy');
+        Route::post('configuration/expenses/{teamExpense}/rates', [ConfigurationController::class, 'storeExpenseRate'])->name('configuration.expenses.rates.store');
+        Route::patch('configuration/expenses/{teamExpense}/rates/{teamExpenseRate}', [ConfigurationController::class, 'updateExpenseRate'])->name('configuration.expenses.rates.update');
+        Route::delete('configuration/expenses/{teamExpense}/rates/{teamExpenseRate}', [ConfigurationController::class, 'destroyExpenseRate'])->name('configuration.expenses.rates.destroy');
     });
 
 Route::get('invitations/{invitation}/accept', [TeamInvitationController::class, 'accept'])->name('invitations.accept');

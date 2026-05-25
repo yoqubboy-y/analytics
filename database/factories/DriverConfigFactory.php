@@ -23,8 +23,37 @@ class DriverConfigFactory extends Factory
             'team_id' => Team::factory(),
             'external_driver_id' => $this->faker->unique()->numberBetween(1, 99999),
             'contract_type' => DriverContractType::CompanyCpm,
-            'tariff_rate' => 0.6500,
         ];
+    }
+
+    /**
+     * Give every config an initial tariff rate so it is usable out of the box.
+     * `withTariff()` replaces this default when an explicit rate is required.
+     */
+    public function configure(): static
+    {
+        return $this->afterCreating(function (DriverConfig $config) {
+            if ($config->rates()->doesntExist()) {
+                $config->rates()->create([
+                    'tariff_rate' => 0.6500,
+                    'effective_from' => now()->startOfWeek()->toDateString(),
+                ]);
+            }
+        });
+    }
+
+    /**
+     * Set the config's tariff rate, replacing the default initial rate.
+     */
+    public function withTariff(float $rate, ?string $effectiveFrom = null): static
+    {
+        return $this->afterCreating(function (DriverConfig $config) use ($rate, $effectiveFrom) {
+            $config->rates()->delete();
+            $config->rates()->create([
+                'tariff_rate' => $rate,
+                'effective_from' => $effectiveFrom ?? now()->startOfWeek()->toDateString(),
+            ]);
+        });
     }
 
     /**
@@ -34,8 +63,7 @@ class DriverConfigFactory extends Factory
     {
         return $this->state(fn () => [
             'contract_type' => DriverContractType::CompanyCpm,
-            'tariff_rate' => $rate,
-        ]);
+        ])->withTariff($rate);
     }
 
     /**
@@ -45,8 +73,7 @@ class DriverConfigFactory extends Factory
     {
         return $this->state(fn () => [
             'contract_type' => DriverContractType::CompanyPercentage,
-            'tariff_rate' => $rate,
-        ]);
+        ])->withTariff($rate);
     }
 
     /**
@@ -56,8 +83,7 @@ class DriverConfigFactory extends Factory
     {
         return $this->state(fn () => [
             'contract_type' => DriverContractType::LeaseOperator,
-            'tariff_rate' => $rate,
-        ]);
+        ])->withTariff($rate);
     }
 
     /**
@@ -67,7 +93,6 @@ class DriverConfigFactory extends Factory
     {
         return $this->state(fn () => [
             'contract_type' => DriverContractType::OwnerOperator,
-            'tariff_rate' => $rate,
-        ]);
+        ])->withTariff($rate);
     }
 }

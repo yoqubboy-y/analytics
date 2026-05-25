@@ -25,10 +25,39 @@ class TeamExpenseFactory extends Factory
             'name' => $this->faker->words(3, asText: true),
             'description' => $this->faker->optional()->sentence(),
             'calculation_type' => $this->faker->randomElement(ExpenseCalculationType::cases()),
-            'rate' => $this->faker->randomFloat(4, 0.01, 500),
             'applies_to' => null,
             'sort_order' => 0,
         ];
+    }
+
+    /**
+     * Give every expense an initial rate so it is usable out of the box.
+     * `withRate()` replaces this default when an explicit rate is required.
+     */
+    public function configure(): static
+    {
+        return $this->afterCreating(function (TeamExpense $expense) {
+            if ($expense->rates()->doesntExist()) {
+                $expense->rates()->create([
+                    'rate' => $this->faker->randomFloat(4, 0.01, 500),
+                    'effective_from' => now()->startOfWeek()->toDateString(),
+                ]);
+            }
+        });
+    }
+
+    /**
+     * Set the expense's rate, replacing the default initial rate.
+     */
+    public function withRate(float $rate, ?string $effectiveFrom = null): static
+    {
+        return $this->afterCreating(function (TeamExpense $expense) use ($rate, $effectiveFrom) {
+            $expense->rates()->delete();
+            $expense->rates()->create([
+                'rate' => $rate,
+                'effective_from' => $effectiveFrom ?? now()->startOfWeek()->toDateString(),
+            ]);
+        });
     }
 
     /**
@@ -39,8 +68,7 @@ class TeamExpenseFactory extends Factory
         return $this->state(fn () => [
             'name' => $name,
             'calculation_type' => ExpenseCalculationType::PerMile,
-            'rate' => $rate,
-        ]);
+        ])->withRate($rate);
     }
 
     /**
@@ -51,8 +79,7 @@ class TeamExpenseFactory extends Factory
         return $this->state(fn () => [
             'name' => $name,
             'calculation_type' => ExpenseCalculationType::PercentageOfGross,
-            'rate' => $rate,
-        ]);
+        ])->withRate($rate);
     }
 
     /**
@@ -63,8 +90,7 @@ class TeamExpenseFactory extends Factory
         return $this->state(fn () => [
             'name' => $name,
             'calculation_type' => ExpenseCalculationType::Flat,
-            'rate' => $amount,
-        ]);
+        ])->withRate($amount);
     }
 
     /**

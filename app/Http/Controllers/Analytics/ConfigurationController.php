@@ -6,8 +6,10 @@ use App\Enums\DriverContractType;
 use App\Enums\ExpenseCalculationType;
 use App\Http\Controllers\Controller;
 use App\Models\DriverConfig;
+use App\Models\DriverConfigRate;
 use App\Models\Team;
 use App\Models\TeamExpense;
+use App\Models\TeamExpenseRate;
 use App\Services\AnalyticsService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -24,21 +26,35 @@ class ConfigurationController extends Controller
         $driverNames = $this->analytics->getDriverNames($currentTeam);
 
         return Inertia::render('analytics/configuration', [
-            'driverConfigs' => $currentTeam->driverConfigs
+            'driverConfigs' => $currentTeam->driverConfigs->load('rates')
                 ->map(fn (DriverConfig $dc) => [
                     'id' => $dc->id,
                     'external_driver_id' => $dc->external_driver_id,
                     'driver_name' => $driverNames->get($dc->external_driver_id, "Driver #{$dc->external_driver_id}"),
                     'contract_type' => $dc->contract_type->value,
-                    'tariff_rate' => $dc->tariff_rate,
+                    'current_rate' => $dc->currentRate(),
+                    'rates' => $dc->rates->sortByDesc('effective_from')->values()
+                        ->map(fn (DriverConfigRate $r) => [
+                            'id' => $r->id,
+                            'tariff_rate' => $r->tariff_rate,
+                            'effective_from' => $r->effective_from->toDateString(),
+                            'effective_to' => $r->effective_to?->toDateString(),
+                        ])->all(),
                 ])->values(),
-            'expenses' => $currentTeam->expenses
+            'expenses' => $currentTeam->expenses->load('rates')
                 ->map(fn (TeamExpense $e) => [
                     'id' => $e->id,
                     'name' => $e->name,
                     'description' => $e->description,
                     'calculation_type' => $e->calculation_type->value,
-                    'rate' => $e->rate,
+                    'current_rate' => $e->currentRate(),
+                    'rates' => $e->rates->sortByDesc('effective_from')->values()
+                        ->map(fn (TeamExpenseRate $r) => [
+                            'id' => $r->id,
+                            'rate' => $r->rate,
+                            'effective_from' => $r->effective_from->toDateString(),
+                            'effective_to' => $r->effective_to?->toDateString(),
+                        ])->all(),
                     'applies_to' => $e->applies_to,
                     'skip_when_no_gross' => $e->skip_when_no_gross,
                     'sort_order' => $e->sort_order,
@@ -60,21 +76,96 @@ class ConfigurationController extends Controller
             'external_driver_id' => ['required', 'integer', 'min:1', Rule::unique('driver_configs')->where('team_id', $currentTeam->id)],
             'contract_type' => ['required', Rule::enum(DriverContractType::class)],
             'tariff_rate' => ['required', 'numeric', 'min:0', 'max:9999'],
+            'effective_from' => ['required', 'date'],
+            'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
         ]);
 
-        $currentTeam->driverConfigs()->create($data);
+        $config = $currentTeam->driverConfigs()->create([
+            'external_driver_id' => $data['external_driver_id'],
+            'contract_type' => $data['contract_type'],
+        ]);
+
+        $config->rates()->create([
+            'tariff_rate' => $data['tariff_rate'],
+            'effective_from' => $data['effective_from'],
+            'effective_to' => $data['effective_to'] ?? null,
+        ]);
 
         return back();
     }
 
     public function updateDriverConfig(Request $request, Team $currentTeam, DriverConfig $driverConfig): RedirectResponse
     {
+        $this->ensureBelongsToTeam($driverConfig->team_id, $currentTeam);
+
         $data = $request->validate([
             'contract_type' => ['required', Rule::enum(DriverContractType::class)],
-            'tariff_rate' => ['required', 'numeric', 'min:0', 'max:9999'],
         ]);
 
         $driverConfig->update($data);
+
+        return back();
+    }
+
+    public function storeDriverConfigRate(Request $request, Team $currentTeam, DriverConfig $driverConfig): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($driverConfig->team_id, $currentTeam);
+
+        $data = $request->validate([
+            'tariff_rate' => ['required', 'numeric', 'min:0', 'max:9999'],
+            'effective_from' => ['required', 'date'],
+            'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
+        ]);
+
+        // One rate per effective date: a second change in the same week replaces it.
+        $existing = $driverConfig->rates()->whereDate('effective_from', $data['effective_from'])->first();
+
+        if ($existing) {
+            $existing->update([
+                'tariff_rate' => $data['tariff_rate'],
+                'effective_to' => $data['effective_to'] ?? null,
+            ]);
+        } else {
+            $driverConfig->rates()->create([
+                'tariff_rate' => $data['tariff_rate'],
+                'effective_from' => $data['effective_from'],
+                'effective_to' => $data['effective_to'] ?? null,
+            ]);
+        }
+
+        return back();
+    }
+
+    public function updateDriverConfigRate(Request $request, Team $currentTeam, DriverConfig $driverConfig, DriverConfigRate $driverConfigRate): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($driverConfig->team_id, $currentTeam);
+        $this->ensureRateBelongsToParent($driverConfigRate->driver_config_id, $driverConfig->id);
+
+        $data = $request->validate([
+            'tariff_rate' => ['required', 'numeric', 'min:0', 'max:9999'],
+            'effective_from' => ['required', 'date'],
+            'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
+        ]);
+
+        $driverConfigRate->update([
+            'tariff_rate' => $data['tariff_rate'],
+            'effective_from' => $data['effective_from'],
+            'effective_to' => $data['effective_to'] ?? null,
+        ]);
+
+        return back();
+    }
+
+    public function destroyDriverConfigRate(Team $currentTeam, DriverConfig $driverConfig, DriverConfigRate $driverConfigRate): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($driverConfig->team_id, $currentTeam);
+        $this->ensureRateBelongsToParent($driverConfigRate->driver_config_id, $driverConfig->id);
+
+        if ($driverConfig->rates()->count() <= 1) {
+            return back()->withErrors(['rate' => 'A driver config must keep at least one rate.']);
+        }
+
+        $driverConfigRate->delete();
 
         return back();
     }
@@ -86,24 +177,40 @@ class ConfigurationController extends Controller
             'description' => ['nullable', 'string', 'max:500'],
             'calculation_type' => ['required', Rule::enum(ExpenseCalculationType::class)],
             'rate' => ['required', 'numeric', 'min:0'],
+            'effective_from' => ['required', 'date'],
+            'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
             'applies_to' => ['nullable', 'array'],
             'applies_to.*' => [Rule::enum(DriverContractType::class)],
             'skip_when_no_gross' => ['boolean'],
             'sort_order' => ['integer', 'min:0'],
         ]);
 
-        $currentTeam->expenses()->create($data);
+        $expense = $currentTeam->expenses()->create([
+            'name' => $data['name'],
+            'description' => $data['description'] ?? null,
+            'calculation_type' => $data['calculation_type'],
+            'applies_to' => $data['applies_to'] ?? null,
+            'skip_when_no_gross' => $data['skip_when_no_gross'] ?? false,
+            'sort_order' => $data['sort_order'] ?? 0,
+        ]);
+
+        $expense->rates()->create([
+            'rate' => $data['rate'],
+            'effective_from' => $data['effective_from'],
+            'effective_to' => $data['effective_to'] ?? null,
+        ]);
 
         return back();
     }
 
     public function updateExpense(Request $request, Team $currentTeam, TeamExpense $teamExpense): RedirectResponse
     {
+        $this->ensureBelongsToTeam($teamExpense->team_id, $currentTeam);
+
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:500'],
             'calculation_type' => ['required', Rule::enum(ExpenseCalculationType::class)],
-            'rate' => ['required', 'numeric', 'min:0'],
             'applies_to' => ['nullable', 'array'],
             'applies_to.*' => [Rule::enum(DriverContractType::class)],
             'skip_when_no_gross' => ['boolean'],
@@ -117,8 +224,89 @@ class ConfigurationController extends Controller
 
     public function destroyExpense(Team $currentTeam, TeamExpense $teamExpense): RedirectResponse
     {
+        $this->ensureBelongsToTeam($teamExpense->team_id, $currentTeam);
+
         $teamExpense->delete();
 
         return back();
+    }
+
+    public function storeExpenseRate(Request $request, Team $currentTeam, TeamExpense $teamExpense): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($teamExpense->team_id, $currentTeam);
+
+        $data = $request->validate([
+            'rate' => ['required', 'numeric', 'min:0'],
+            'effective_from' => ['required', 'date'],
+            'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
+        ]);
+
+        // One rate per effective date: a second change in the same week replaces it.
+        $existing = $teamExpense->rates()->whereDate('effective_from', $data['effective_from'])->first();
+
+        if ($existing) {
+            $existing->update([
+                'rate' => $data['rate'],
+                'effective_to' => $data['effective_to'] ?? null,
+            ]);
+        } else {
+            $teamExpense->rates()->create([
+                'rate' => $data['rate'],
+                'effective_from' => $data['effective_from'],
+                'effective_to' => $data['effective_to'] ?? null,
+            ]);
+        }
+
+        return back();
+    }
+
+    public function updateExpenseRate(Request $request, Team $currentTeam, TeamExpense $teamExpense, TeamExpenseRate $teamExpenseRate): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($teamExpense->team_id, $currentTeam);
+        $this->ensureRateBelongsToParent($teamExpenseRate->team_expense_id, $teamExpense->id);
+
+        $data = $request->validate([
+            'rate' => ['required', 'numeric', 'min:0'],
+            'effective_from' => ['required', 'date'],
+            'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
+        ]);
+
+        $teamExpenseRate->update([
+            'rate' => $data['rate'],
+            'effective_from' => $data['effective_from'],
+            'effective_to' => $data['effective_to'] ?? null,
+        ]);
+
+        return back();
+    }
+
+    public function destroyExpenseRate(Team $currentTeam, TeamExpense $teamExpense, TeamExpenseRate $teamExpenseRate): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($teamExpense->team_id, $currentTeam);
+        $this->ensureRateBelongsToParent($teamExpenseRate->team_expense_id, $teamExpense->id);
+
+        if ($teamExpense->rates()->count() <= 1) {
+            return back()->withErrors(['rate' => 'An expense must keep at least one rate.']);
+        }
+
+        $teamExpenseRate->delete();
+
+        return back();
+    }
+
+    /**
+     * Ensure the given resource belongs to the current team.
+     */
+    private function ensureBelongsToTeam(int $teamId, Team $currentTeam): void
+    {
+        abort_unless($teamId === $currentTeam->id, 403);
+    }
+
+    /**
+     * Ensure a rate row belongs to the expected parent resource.
+     */
+    private function ensureRateBelongsToParent(int $rateParentId, int $parentId): void
+    {
+        abort_unless($rateParentId === $parentId, 403);
     }
 }
