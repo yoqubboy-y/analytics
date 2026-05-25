@@ -3,6 +3,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { Check, Mail, MoreHorizontal, Search, UserPlus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import CancelInvitationModal from '@/components/cancel-invitation-modal';
+import CreateUserModal from '@/components/create-user-modal';
 import DeleteTeamModal from '@/components/delete-team-modal';
 import Heading from '@/components/heading';
 import InviteMemberModal from '@/components/invite-member-modal';
@@ -84,6 +85,7 @@ export default function AdministrationTeam({
     const [roleFilter, setRoleFilter] = useState('all');
 
     const [inviteOpen, setInviteOpen] = useState(false);
+    const [createOpen, setCreateOpen] = useState(false);
     const [deleteOpen, setDeleteOpen] = useState(false);
     const [memberToRemove, setMemberToRemove] = useState<AdminMember | null>(
         null,
@@ -205,13 +207,23 @@ export default function AdministrationTeam({
                                 ))}
                             </SelectContent>
                         </Select>
+                        {permissions.canAddMember && (
+                            <Button
+                                className="gap-1.5"
+                                onClick={() => setCreateOpen(true)}
+                            >
+                                <UserPlus className="h-4 w-4" />
+                                Create user
+                            </Button>
+                        )}
                         {permissions.canCreateInvitation && (
                             <Button
+                                variant="outline"
                                 className="gap-1.5"
                                 onClick={() => setInviteOpen(true)}
                             >
-                                <UserPlus className="h-4 w-4" />
-                                Invite user
+                                <Mail className="h-4 w-4" />
+                                Invite
                             </Button>
                         )}
                     </div>
@@ -455,6 +467,15 @@ export default function AdministrationTeam({
                     </section>
                 )}
             </div>
+
+            {permissions.canAddMember && (
+                <CreateUserModal
+                    team={team}
+                    availableRoles={availableRoles}
+                    open={createOpen}
+                    onOpenChange={setCreateOpen}
+                />
+            )}
 
             {permissions.canCreateInvitation && (
                 <InviteMemberModal

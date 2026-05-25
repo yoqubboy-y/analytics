@@ -5,6 +5,7 @@ use App\Models\Team;
 use App\Models\TeamInvitation;
 use App\Models\User;
 use App\Notifications\Teams\TeamInvitation as TeamInvitationNotification;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -101,4 +102,91 @@ test('an authenticated request records last activity', function () {
     $this->actingAs($user)->get(route('administration.index'))->assertOk();
 
     expect($user->fresh()->last_active_at)->not->toBeNull();
+});
+
+test('an admin can create a user directly', function () {
+    $admin = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($admin, ['role' => TeamRole::Admin->value]);
+
+    $this
+        ->actingAs($admin)
+        ->post(route('teams.members.store', $team), [
+            'name' => 'New User',
+            'email' => 'new@example.com',
+            'role' => TeamRole::Member->value,
+            'password' => 'password',
+            'password_confirmation' => 'password',
+        ])
+        ->assertRedirect();
+
+    $user = User::where('email', 'new@example.com')->firstOrFail();
+
+    expect($user->name)->toBe('New User')
+        ->and($user->hasVerifiedEmail())->toBeTrue()
+        ->and($user->belongsToTeam($team))->toBeTrue()
+        ->and($user->current_team_id)->toBe($team->id)
+        ->and(Hash::check('password', $user->password))->toBeTrue()
+        ->and($team->members()->whereKey($user->id)->first()->pivot->role)->toBe(TeamRole::Member);
+});
+
+test('creating a user with an existing email adds them to the team', function () {
+    $admin = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($admin, ['role' => TeamRole::Admin->value]);
+
+    $existing = User::factory()->create(['email' => 'existing@example.com']);
+    $originalPassword = $existing->password;
+
+    $this
+        ->actingAs($admin)
+        ->post(route('teams.members.store', $team), [
+            'name' => 'Ignored',
+            'email' => 'existing@example.com',
+            'role' => TeamRole::Viewer->value,
+            'password' => 'password',
+            'password_confirmation' => 'password',
+        ])
+        ->assertRedirect();
+
+    expect($existing->fresh()->belongsToTeam($team))->toBeTrue()
+        ->and($existing->fresh()->password)->toBe($originalPassword)
+        ->and(User::where('email', 'existing@example.com')->count())->toBe(1);
+});
+
+test('creating a user who is already a member is rejected', function () {
+    $admin = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($admin, ['role' => TeamRole::Admin->value]);
+
+    $member = User::factory()->create(['email' => 'member@example.com']);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+
+    $this
+        ->actingAs($admin)
+        ->post(route('teams.members.store', $team), [
+            'name' => 'X',
+            'email' => 'member@example.com',
+            'role' => TeamRole::Member->value,
+            'password' => 'password',
+            'password_confirmation' => 'password',
+        ])
+        ->assertSessionHasErrors('email');
+});
+
+test('a regular member cannot create users', function () {
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+
+    $this
+        ->actingAs($member)
+        ->post(route('teams.members.store', $team), [
+            'name' => 'X',
+            'email' => 'x@example.com',
+            'role' => TeamRole::Member->value,
+            'password' => 'password',
+            'password_confirmation' => 'password',
+        ])
+        ->assertForbidden();
 });

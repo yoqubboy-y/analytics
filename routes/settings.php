@@ -35,6 +35,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('teams/{team}', [TeamController::class, 'destroy'])->name('teams.destroy');
         Route::post('teams/{team}/switch', [TeamController::class, 'switch'])->name('teams.switch');
 
+        Route::post('teams/{team}/members', [TeamMemberController::class, 'store'])->name('teams.members.store');
         Route::patch('teams/{team}/members/{user}', [TeamMemberController::class, 'update'])->name('teams.members.update');
         Route::delete('teams/{team}/members/{user}', [TeamMemberController::class, 'destroy'])->name('teams.members.destroy');
 
