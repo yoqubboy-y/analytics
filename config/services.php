@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    // Public Mapbox token (pk.*) — used by the assistant to draw route maps.
+    'mapbox' => [
+        'token' => env('MAPBOX_TOKEN'),
+    ],
+
 ];

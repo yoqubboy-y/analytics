@@ -68,29 +68,21 @@ export function KeyMetrics({
     const miles = totalRow?.total_miles ?? 0;
     const rpm = totalRow?.rpm ?? 0;
 
-    const trucksWithData = useMemo(
-        () =>
-            new Set(
-                driverRows
-                    .filter((r) => r.truck_number)
-                    .map((r) => r.truck_number),
-            ).size,
-        [driverRows],
-    );
+    // Fleet-wide weekly averages: divide by ALL active drivers so the figures
+    // reconcile with the "Total Drivers" count (gross ÷ drivers ÷ weeks), rather
+    // than only the trucks that grossed (which made the average look inflated).
+    const fleetSize = metrics.drivers.total;
+    const perDriverWeek = (value: number) =>
+        fleetSize > 0 ? value / fleetSize / weeks : 0;
 
-    // Per-truck figures are weekly averages, so they stay comparable whatever
-    // the window length (gross/truck/week, miles/truck/week).
-    const avgGrossPerTruck =
-        trucksWithData > 0 ? gross / trucksWithData / weeks : 0;
-    const avgMilesPerTruck =
-        trucksWithData > 0 ? miles / trucksWithData / weeks : 0;
+    const avgGrossPerTruck = perDriverWeek(gross);
+    const avgMilesPerTruck = perDriverWeek(miles);
     const totalDays = driverRows.reduce((sum, r) => sum + r.days, 0);
     const avgDailyMiles = totalDays > 0 ? miles / totalDays : 0;
 
-    // Net (P&L) for the period, with the same per-truck/week average as Gross.
+    // Net (P&L) for the period, same fleet-wide per-week average as Gross.
     const net = totalRow?.profit_loss ?? 0;
-    const avgNetPerTruck =
-        trucksWithData > 0 ? net / trucksWithData / weeks : 0;
+    const avgNetPerTruck = perDriverWeek(net);
     const margin = gross > 0 ? (net / gross) * 100 : 0;
     const netTone = net >= 0 ? 'text-emerald-500' : 'text-red-500';
 

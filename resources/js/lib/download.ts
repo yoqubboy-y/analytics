@@ -1,5 +1,17 @@
 import { toPng } from 'html-to-image';
 
+/** Trigger a browser download for an in-memory Blob. */
+export function downloadBlob(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}
+
 /** Resolve a usable background colour so captures aren't transparent. */
 function resolveBackground(node: HTMLElement): string {
     const bg = getComputedStyle(node).backgroundColor;

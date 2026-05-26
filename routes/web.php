@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\TeamRole;
+use App\Http\Controllers\Ai\ChatController;
 use App\Http\Controllers\Analytics\AnalyticsController;
 use App\Http\Controllers\Analytics\ConfigurationController;
 use App\Http\Controllers\Analytics\DashboardShareController;
@@ -57,6 +58,28 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('administration/teams/{team}', [AdministrationController::class, 'show'])
         ->middleware(EnsureTeamMembership::class.':'.TeamRole::Admin->value)
         ->name('administration.teams.show');
+});
+
+// AI assistant — read-only analytics chat, scoped to the user's current team.
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::post('ai/chat', ChatController::class)
+        ->middleware('throttle:30,1')
+        ->name('ai.chat');
+
+    Route::get('ai/models', [ChatController::class, 'models'])
+        ->name('ai.models');
+
+    Route::get('ai/conversation', [ChatController::class, 'conversation'])
+        ->name('ai.conversation');
+
+    Route::get('ai/conversations', [ChatController::class, 'conversations'])
+        ->name('ai.conversations');
+
+    Route::patch('ai/conversations/{conversation}', [ChatController::class, 'rename'])
+        ->name('ai.conversations.rename');
+
+    Route::delete('ai/conversations/{conversation}', [ChatController::class, 'destroy'])
+        ->name('ai.conversations.destroy');
 });
 
 Route::get('invitations/{invitation}/accept', [TeamInvitationController::class, 'accept'])->name('invitations.accept');
