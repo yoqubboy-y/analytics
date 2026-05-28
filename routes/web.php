@@ -2,9 +2,11 @@
 
 use App\Enums\TeamRole;
 use App\Http\Controllers\Ai\ChatController;
+use App\Http\Controllers\Analytics\AnalyticsComparisonController;
 use App\Http\Controllers\Analytics\AnalyticsController;
 use App\Http\Controllers\Analytics\ConfigurationController;
 use App\Http\Controllers\Analytics\DashboardShareController;
+use App\Http\Controllers\Analytics\ImportController;
 use App\Http\Controllers\Teams\AdministrationController;
 use App\Http\Controllers\Teams\TeamInvitationController;
 use App\Http\Middleware\EnsureTeamMembership;
@@ -50,7 +52,23 @@ Route::prefix('{current_team}')
             Route::patch('configuration/expenses/{teamExpense}/rates/{teamExpenseRate}', [ConfigurationController::class, 'updateExpenseRate'])->name('configuration.expenses.rates.update');
             Route::delete('configuration/expenses/{teamExpense}/rates/{teamExpenseRate}', [ConfigurationController::class, 'destroyExpenseRate'])->name('configuration.expenses.rates.destroy');
         });
+
+        // XLSX import + data-source switch — Admin/Owner only (enforced in controller).
+        Route::middleware(EnsureTeamMembership::class.':'.TeamRole::Admin->value)->group(function () {
+            Route::post('imports/xlsx', [ImportController::class, 'storeXlsx'])->name('imports.xlsx.store');
+            Route::patch('configuration/data-source', [ImportController::class, 'updateDataSource'])->name('configuration.data-source.update');
+        });
+        // Any team member can poll import status.
+        Route::middleware(EnsureTeamMembership::class)->group(function () {
+            Route::get('imports', [ImportController::class, 'listImports'])->name('imports.list');
+        });
     });
+
+// Side-by-side comparison of two teams the user belongs to. Lives outside
+// the `{current_team}` prefix since both teams come from query params.
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('compare', [AnalyticsComparisonController::class, 'show'])->name('compare.show');
+});
 
 // Administration — team & user management (replaces the old settings/teams pages).
 Route::middleware(['auth', 'verified'])->group(function () {

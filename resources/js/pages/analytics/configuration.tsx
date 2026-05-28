@@ -1,6 +1,6 @@
 import { Head, router, usePage } from '@inertiajs/react';
 import { ReceiptText } from 'lucide-react';
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import {
     destroyDriverConfigRate,
     destroyExpense,
@@ -61,6 +61,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { WeekPicker, isoMonday } from '@/components/week-picker';
+import { ImportsTab } from './imports-tab';
 
 type ContractType = { value: string; label: string };
 type CalculationType = { value: string; label: string };
@@ -74,11 +75,19 @@ type DriverConfigRate = {
 
 type DriverConfig = {
     id: number;
-    external_driver_id: number;
+    external_driver_id: number | null;
+    external_driver_key: string | null;
     driver_name: string;
+    dispatcher: string | null;
     contract_type: string;
     current_rate: number | null;
     rates: DriverConfigRate[];
+};
+
+type ImportedDriver = {
+    external_driver_key: string;
+    driver_name: string;
+    truck_number: string | null;
 };
 
 type ExpenseRate = {
@@ -105,6 +114,18 @@ type Props = {
     expenses: TeamExpense[];
     contractTypes: ContractType[];
     calculationTypes: CalculationType[];
+    importedDrivers: ImportedDriver[];
+    dataSource: 'analytics_db' | 'xlsx';
+    canImport: boolean;
+    canChangeDataSource: boolean;
+    importSummary: {
+        total_rows: number;
+        min_date: string | null;
+        max_date: string | null;
+        last_filename: string | null;
+        last_format: string | null;
+        last_imported_at: string | null;
+    };
 };
 
 // Rate mutations redirect back; keep the dialog open and the scroll position.
@@ -175,6 +196,11 @@ export default function Configuration({
     expenses,
     contractTypes,
     calculationTypes,
+    importedDrivers,
+    dataSource,
+    canImport,
+    canChangeDataSource,
+    importSummary,
 }: Props) {
     const page = usePage();
     const slug = page.props.currentTeam?.slug ?? '';
@@ -188,8 +214,12 @@ export default function Configuration({
         driverPage * driverPageSize,
     );
 
+    const isXlsx = dataSource === 'xlsx';
+
     const emptyDriverConfig = {
         external_driver_id: '',
+        external_driver_key: '',
+        dispatcher: '',
         contract_type: contractTypes[0]?.value ?? '',
         tariff_rate: '',
         effective_from: isoMonday(),
@@ -199,18 +229,40 @@ export default function Configuration({
     });
     const [addDriverOpen, setAddDriverOpen] = useState(false);
 
+    // Imported drivers that don't yet have a config — what the XLSX driver
+    // picker offers. Recomputes when imports or configs change.
+    const unconfiguredImportedDrivers = useMemo(() => {
+        const taken = new Set(
+            driverConfigs
+                .map((dc) => dc.external_driver_key)
+                .filter((k): k is string => !!k),
+        );
+        return importedDrivers.filter((d) => !taken.has(d.external_driver_key));
+    }, [importedDrivers, driverConfigs]);
+
     function submitNewDriverConfig(e: React.FormEvent) {
         e.preventDefault();
+        const payload: Record<string, unknown> = {
+            contract_type: newDriverConfig.contract_type,
+            tariff_rate: parseFloat(newDriverConfig.tariff_rate as string),
+            effective_from: newDriverConfig.effective_from,
+            dispatcher: newDriverConfig.dispatcher.trim() || null,
+        };
+
+        if (isXlsx) {
+            payload.external_driver_key = newDriverConfig.external_driver_key;
+        } else {
+            payload.external_driver_id = parseInt(
+                newDriverConfig.external_driver_id as string,
+            );
+        }
+
         router[storeDriverConfig(slug).method](
             storeDriverConfig.url(slug),
-            {
-                external_driver_id: parseInt(
-                    newDriverConfig.external_driver_id as string,
-                ),
-                contract_type: newDriverConfig.contract_type,
-                tariff_rate: parseFloat(newDriverConfig.tariff_rate as string),
-                effective_from: newDriverConfig.effective_from,
-            },
+            // Inertia accepts JSON-serialisable payloads at runtime; its TS
+            // typing is conservative for mixed-shape `Record<string, unknown>`.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            payload as any,
             {
                 onSuccess: () => {
                     setNewDriverConfig({ ...emptyDriverConfig });
@@ -223,12 +275,14 @@ export default function Configuration({
     const [editingDriver, setEditingDriver] = useState<{
         id: number;
         contract_type: string;
+        dispatcher: string;
     } | null>(null);
 
     function startEditDriver(dc: DriverConfig) {
         setEditingDriver({
             id: dc.id,
             contract_type: dc.contract_type,
+            dispatcher: dc.dispatcher ?? '',
         });
     }
 
@@ -239,7 +293,10 @@ export default function Configuration({
 
         router[updateDriverConfig([slug, editingDriver.id]).method](
             updateDriverConfig.url([slug, editingDriver.id]),
-            { contract_type: editingDriver.contract_type },
+            {
+                contract_type: editingDriver.contract_type,
+                dispatcher: editingDriver.dispatcher.trim() || null,
+            },
             { onSuccess: () => setEditingDriver(null) },
         );
     }
@@ -415,6 +472,12 @@ export default function Configuration({
                         >
                             Team Expenses
                         </TabsTrigger>
+                        <TabsTrigger
+                            className="rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
+                            value="imports"
+                        >
+                            Imports
+                        </TabsTrigger>
                     </TabsList>
 
                     {/* Driver Contracts Tab */}
@@ -438,26 +501,88 @@ export default function Configuration({
                                         onSubmit={submitNewDriverConfig}
                                     >
                                         <div className="flex flex-col gap-4">
+                                            {isXlsx ? (
+                                                <div className="flex flex-col gap-1">
+                                                    <Label htmlFor="dc-driver-key">
+                                                        Driver (from imports)
+                                                    </Label>
+                                                    <Select
+                                                        value={
+                                                            newDriverConfig.external_driver_key
+                                                        }
+                                                        onValueChange={(v) =>
+                                                            setNewDriverConfig({
+                                                                ...newDriverConfig,
+                                                                external_driver_key: v,
+                                                            })
+                                                        }
+                                                    >
+                                                        <SelectTrigger id="dc-driver-key">
+                                                            <SelectValue placeholder="Pick a driver…" />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {unconfiguredImportedDrivers.length === 0 && (
+                                                                <div className="px-3 py-2 text-xs text-muted-foreground">
+                                                                    {importedDrivers.length === 0
+                                                                        ? 'No imported drivers yet — upload a workbook first.'
+                                                                        : 'Every imported driver already has a config.'}
+                                                                </div>
+                                                            )}
+                                                            {unconfiguredImportedDrivers.map(
+                                                                (d) => (
+                                                                    <SelectItem
+                                                                        key={d.external_driver_key}
+                                                                        value={d.external_driver_key}
+                                                                    >
+                                                                        {d.driver_name}
+                                                                        {d.truck_number ? ` · ${d.truck_number}` : ''}
+                                                                    </SelectItem>
+                                                                ),
+                                                            )}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-col gap-1">
+                                                    <Label htmlFor="dc-driver-id">
+                                                        Driver ID
+                                                    </Label>
+                                                    <Input
+                                                        id="dc-driver-id"
+                                                        type="number"
+                                                        min="1"
+                                                        required
+                                                        value={
+                                                            newDriverConfig.external_driver_id
+                                                        }
+                                                        onChange={(e) =>
+                                                            setNewDriverConfig({
+                                                                ...newDriverConfig,
+                                                                external_driver_id:
+                                                                    e.target.value,
+                                                            })
+                                                        }
+                                                        placeholder="e.g. 42"
+                                                    />
+                                                </div>
+                                            )}
                                             <div className="flex flex-col gap-1">
-                                                <Label htmlFor="dc-driver-id">
-                                                    Driver ID
+                                                <Label htmlFor="dc-dispatcher">
+                                                    Dispatcher{' '}
+                                                    <span className="text-xs font-normal text-muted-foreground">
+                                                        (optional)
+                                                    </span>
                                                 </Label>
                                                 <Input
-                                                    id="dc-driver-id"
-                                                    type="number"
-                                                    min="1"
-                                                    required
-                                                    value={
-                                                        newDriverConfig.external_driver_id
-                                                    }
+                                                    id="dc-dispatcher"
+                                                    value={newDriverConfig.dispatcher}
                                                     onChange={(e) =>
                                                         setNewDriverConfig({
                                                             ...newDriverConfig,
-                                                            external_driver_id:
-                                                                e.target.value,
+                                                            dispatcher: e.target.value,
                                                         })
                                                     }
-                                                    placeholder="e.g. 42"
+                                                    placeholder="e.g. Aidan Scott"
                                                 />
                                             </div>
                                             <div className="flex gap-4">
@@ -578,6 +703,7 @@ export default function Configuration({
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead>Driver</TableHead>
+                                        <TableHead>Dispatcher</TableHead>
                                         <TableHead>Contract Type</TableHead>
                                         <TableHead>Current Rate</TableHead>
                                         <TableHead></TableHead>
@@ -592,6 +718,25 @@ export default function Configuration({
                                             <TableRow key={dc.id}>
                                                 <TableCell className="font-medium">
                                                     {dc.driver_name}
+                                                </TableCell>
+                                                <TableCell>
+                                                    {isEditing ? (
+                                                        <Input
+                                                            value={editingDriver.dispatcher}
+                                                            onChange={(e) =>
+                                                                setEditingDriver({
+                                                                    ...editingDriver,
+                                                                    dispatcher: e.target.value,
+                                                                })
+                                                            }
+                                                            placeholder="Aidan Scott"
+                                                            className="w-40"
+                                                        />
+                                                    ) : (
+                                                        <span className={dc.dispatcher ? '' : 'text-muted-foreground'}>
+                                                            {dc.dispatcher ?? '—'}
+                                                        </span>
+                                                    )}
                                                 </TableCell>
                                                 <TableCell>
                                                     {isEditing ? (
@@ -1314,6 +1459,16 @@ export default function Configuration({
                                 </EmptyHeader>
                             </Empty>
                         )}
+                    </TabsContent>
+
+                    <TabsContent value="imports" className="mt-4">
+                        <ImportsTab
+                            slug={slug}
+                            dataSource={dataSource}
+                            canImport={canImport}
+                            canChangeDataSource={canChangeDataSource}
+                            importSummary={importSummary}
+                        />
                     </TabsContent>
                 </Tabs>
             </div>

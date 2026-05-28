@@ -81,8 +81,18 @@ export default function AdministrationTeam({
     const getInitials = useInitials();
 
     const [name, setName] = useState(team.name);
+    const [dataSource, setDataSource] = useState<'analytics_db' | 'xlsx'>(
+        team.dataSource ?? 'analytics_db',
+    );
+    const [externalCompanyId, setExternalCompanyId] = useState<string>(
+        team.externalCompanyId != null ? String(team.externalCompanyId) : '',
+    );
     const [search, setSearch] = useState('');
     const [roleFilter, setRoleFilter] = useState('all');
+
+    const dataSourceDirty =
+        dataSource !== (team.dataSource ?? 'analytics_db') ||
+        externalCompanyId !== (team.externalCompanyId != null ? String(team.externalCompanyId) : '');
 
     const [inviteOpen, setInviteOpen] = useState(false);
     const [createOpen, setCreateOpen] = useState(false);
@@ -129,6 +139,20 @@ export default function AdministrationTeam({
         router.patch(updateTeam.url(team.slug), { name }, VISIT);
     }
 
+    function saveDataSource(e: React.FormEvent) {
+        e.preventDefault();
+        router.patch(
+            updateTeam.url(team.slug),
+            {
+                name: team.name,
+                data_source: dataSource,
+                external_company_id:
+                    dataSource === 'analytics_db' ? Number(externalCompanyId) : null,
+            },
+            VISIT,
+        );
+    }
+
     function changeRole(member: AdminMember, role: string) {
         router.patch(updateMember.url([team.slug, member.id]), { role }, VISIT);
     }
@@ -170,6 +194,81 @@ export default function AdministrationTeam({
                             <Button type="submit" disabled={name === team.name}>
                                 Save
                             </Button>
+                        </form>
+
+                        {/* Data source */}
+                        <Heading
+                            variant="small"
+                            title="Data source"
+                            description="Where this team's analytics rows come from."
+                        />
+                        <form
+                            onSubmit={saveDataSource}
+                            className="flex max-w-2xl flex-col gap-3"
+                        >
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setDataSource('analytics_db')}
+                                    className={
+                                        'flex flex-col gap-1 rounded-md border p-3 text-left text-sm transition-colors ' +
+                                        (dataSource === 'analytics_db'
+                                            ? 'border-primary bg-primary/5'
+                                            : 'border-input hover:bg-accent')
+                                    }
+                                >
+                                    <span className="font-medium">Analytics DB</span>
+                                    <span className="text-xs text-muted-foreground">
+                                        Reads weekly P&L from the configured Postgres source.
+                                    </span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setDataSource('xlsx')}
+                                    className={
+                                        'flex flex-col gap-1 rounded-md border p-3 text-left text-sm transition-colors ' +
+                                        (dataSource === 'xlsx'
+                                            ? 'border-primary bg-primary/5'
+                                            : 'border-input hover:bg-accent')
+                                    }
+                                >
+                                    <span className="font-medium">XLSX upload</span>
+                                    <span className="text-xs text-muted-foreground">
+                                        Members import weekly spreadsheets manually.
+                                    </span>
+                                </button>
+                            </div>
+
+                            {dataSource === 'analytics_db' && (
+                                <div className="flex flex-col gap-1.5 sm:max-w-xs">
+                                    <Label htmlFor="team-company-id">External company ID</Label>
+                                    <Input
+                                        id="team-company-id"
+                                        type="number"
+                                        min={1}
+                                        value={externalCompanyId}
+                                        onChange={(e) => setExternalCompanyId(e.target.value)}
+                                        placeholder="e.g. 42"
+                                        required
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        Numeric company id used to filter rows in the analytics
+                                        Postgres. Required for analytics-DB teams.
+                                    </p>
+                                </div>
+                            )}
+
+                            <div>
+                                <Button
+                                    type="submit"
+                                    disabled={
+                                        !dataSourceDirty ||
+                                        (dataSource === 'analytics_db' && !externalCompanyId)
+                                    }
+                                >
+                                    Save data source
+                                </Button>
+                            </div>
                         </form>
                     </section>
                 )}

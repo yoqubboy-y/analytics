@@ -1,5 +1,5 @@
 import { usePage } from '@inertiajs/react';
-import { Cog, Settings2, TrendingUp } from 'lucide-react';
+import { Cog, GitCompareIcon, Settings2, TrendingUp } from 'lucide-react';
 import { NavMain } from '@/components/nav-main';
 import { NavUser } from '@/components/nav-user';
 import { TeamSwitcher } from '@/components/team-switcher';
@@ -19,12 +19,26 @@ export function AppSidebar() {
     // Viewers are analytics-only — no access to configuration.
     const isViewer = page.props.currentTeam?.role === 'viewer';
 
+    // Side-by-side comparison only makes sense when the user is in 2+
+    // non-personal teams; otherwise hide the nav entry entirely.
+    const accessibleTeams = page.props.teams ?? [];
+    const canCompare = accessibleTeams.filter((t) => !t.isPersonal).length >= 2;
+
     const mainNavItems: NavItem[] = [
         {
             title: 'Analytics',
             href: slug ? `/${slug}/analytics` : '#',
             icon: TrendingUp,
         },
+        ...(canCompare
+            ? [
+                  {
+                      title: 'Compare',
+                      href: '/compare',
+                      icon: GitCompareIcon,
+                  } as NavItem,
+              ]
+            : []),
     ];
 
     const configNavItems: NavItem[] = isViewer

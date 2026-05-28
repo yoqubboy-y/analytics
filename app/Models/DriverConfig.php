@@ -14,6 +14,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 #[Fillable([
     'team_id',
     'external_driver_id',
+    'external_driver_key',
+    'dispatcher',
     'contract_type',
 ])]
 class DriverConfig extends Model

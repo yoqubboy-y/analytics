@@ -20,6 +20,7 @@ import {
     EyeOffIcon,
     FilterIcon,
     ImageIcon,
+    PlusIcon,
     SearchIcon,
     Settings2Icon,
     XIcon,
@@ -61,6 +62,12 @@ import { cn } from '@/lib/utils';
 
 export type Row = {
     driver_id: number | null;
+    /**
+     * Set on XLSX-backed teams only — same identity string the analytics
+     * service uses to key driver configs. The PnL table forwards it to the
+     * Configure deep-link so the dialog opens with the right driver picked.
+     */
+    external_driver_key?: string | null;
     driver_name: string;
     dispatcher: string;
     truck_number: string | null;
@@ -194,6 +201,12 @@ interface PnlTableProps {
     title?: string;
     /** Show the export/download options (hidden for viewers). */
     canDownload?: boolean;
+    /**
+     * Invoked when the user clicks "Configure" next to a missing-config
+     * row. The parent renders the Add Driver Config dialog in-place so the
+     * user stays on the analytics page. Omit to hide the button entirely.
+     */
+    onConfigureDriver?: (row: Row) => void;
 }
 
 export function PnlTable({
@@ -201,6 +214,7 @@ export function PnlTable({
     expenses,
     title,
     canDownload = true,
+    onConfigureDriver,
 }: PnlTableProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [driverFilter, setDriverFilter] = useState('');
@@ -295,6 +309,11 @@ export function PnlTable({
             );
         }
 
+        const totalSalary = configured.reduce(
+            (s, r) => s + (r.salary ?? 0),
+            0,
+        );
+
         return {
             driver_id: null,
             driver_name: 'TOTAL',
@@ -305,12 +324,14 @@ export function PnlTable({
             total_gross: totalGross,
             total_miles: totalMiles,
             rpm: totalMiles > 0 ? totalGross / totalMiles : 0,
-            salary: configured.reduce((s, r) => s + (r.salary ?? 0), 0),
+            salary: totalSalary,
             expenses: expenseSums,
-            total_expenses: Object.values(expenseSums).reduce(
-                (s, v) => s + v,
-                0,
-            ),
+            // Total Exp. now folds salary in so the TOTAL row visibly
+            // balances `Gross − Total Exp. = P&L`, matching per-row
+            // semantics from the backend.
+            total_expenses:
+                Object.values(expenseSums).reduce((s, v) => s + v, 0) +
+                totalSalary,
             profit_loss: configured.reduce(
                 (s, r) => s + (r.profit_loss ?? 0),
                 0,
@@ -453,9 +474,21 @@ export function PnlTable({
                 >
                     {row.driver_name}
                     {row.missing_config && (
-                        <span className="ml-1 text-xs text-amber-500">
-                            (no config)
-                        </span>
+                        <>
+                            <span className="ml-1 text-xs text-amber-500">
+                                (no config)
+                            </span>
+                            {onConfigureDriver && (
+                                <button
+                                    type="button"
+                                    onClick={() => onConfigureDriver(row)}
+                                    className="ml-1.5 inline-flex items-center gap-0.5 rounded border border-amber-500/40 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 transition-colors hover:bg-amber-500/10"
+                                >
+                                    <PlusIcon className="h-3 w-3" />
+                                    Configure
+                                </button>
+                            )}
+                        </>
                     )}
                 </span>
             );
@@ -1390,3 +1423,4 @@ function FilterPanel({
         </div>
     );
 }
+

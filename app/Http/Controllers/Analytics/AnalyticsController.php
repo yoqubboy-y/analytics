@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Analytics;
 
+use App\Enums\DriverContractType;
+use App\Enums\TeamDataSource;
 use App\Enums\TeamRole;
 use App\Http\Controllers\Controller;
 use App\Models\DashboardShare;
@@ -40,6 +42,28 @@ class AnalyticsController extends Controller
         // Sharing/downloads are for Members and above; Viewers never see them.
         $canManage = $request->user()->teamRole($currentTeam)?->isAtLeast(TeamRole::Member) ?? false;
 
+        // Drivers/contracts data so an inline "Configure" dialog can open
+        // straight from a missing-config row in the PnL table — no need to
+        // jump to the Configuration page for the common case.
+        $importedDrivers = $currentTeam->data_source === TeamDataSource::Xlsx
+            ? $currentTeam->xlsxDriverDays()
+                ->selectRaw('driver_name, truck_number')
+                ->groupBy('driver_name', 'truck_number')
+                ->orderBy('driver_name')
+                ->get()
+                ->map(fn ($row) => [
+                    'external_driver_key' => $this->analytics->xlsxDriverKey($row->driver_name, $row->truck_number),
+                    'driver_name' => $row->driver_name,
+                    'truck_number' => $row->truck_number,
+                ])
+                ->values()
+            : collect();
+
+        $takenDriverKeys = $currentTeam->driverConfigs()
+            ->whereNotNull('external_driver_key')
+            ->pluck('external_driver_key')
+            ->all();
+
         return Inertia::render('analytics/index', [
             'rows' => $rows->values(),
             'keyMetrics' => $keyMetrics,
@@ -52,6 +76,13 @@ class AnalyticsController extends Controller
             'endDate' => $endDate->toDateString(),
             'canManage' => $canManage,
             'shares' => $canManage ? $this->activeShares($currentTeam) : [],
+            'dataSource' => $currentTeam->data_source->value,
+            'contractTypes' => array_map(fn ($c) => [
+                'value' => $c->value,
+                'label' => $c->label(),
+            ], DriverContractType::cases()),
+            'importedDrivers' => $importedDrivers,
+            'takenDriverKeys' => $takenDriverKeys,
         ]);
     }
 

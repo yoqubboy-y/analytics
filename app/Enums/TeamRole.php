@@ -33,6 +33,7 @@ enum TeamRole: string
                 TeamPermission::RemoveMember,
                 TeamPermission::CreateInvitation,
                 TeamPermission::CancelInvitation,
+                TeamPermission::ImportXlsx,
             ],
             self::Member, self::Viewer => [],
         };

@@ -55,6 +55,8 @@ class AdministrationController extends Controller
                 'name' => $team->name,
                 'slug' => $team->slug,
                 'isPersonal' => $team->is_personal,
+                'dataSource' => $team->data_source->value,
+                'externalCompanyId' => $team->external_company_id,
             ],
             'members' => $team->members()->get()->map(fn (User $member) => [
                 'id' => $member->id,

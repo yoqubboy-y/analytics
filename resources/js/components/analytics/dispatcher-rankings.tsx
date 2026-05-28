@@ -25,9 +25,9 @@ interface DispatcherRankingsProps {
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
     { value: 'total_net', label: 'Total Net' },
-    { value: 'avg_net', label: 'Avg Net / Truck / wk' },
+    { value: 'avg_net', label: 'Avg Net / Driver / wk' },
     { value: 'total_gross', label: 'Total Gross' },
-    { value: 'avg_gross', label: 'Avg Gross / Truck / wk' },
+    { value: 'avg_gross', label: 'Avg Gross / Driver / wk' },
     { value: 'rpm', label: 'RPM' },
 ];
 
@@ -103,8 +103,10 @@ export function DispatcherRankings({
         const windowDays = Math.max(1, weeks * 7);
 
         const list = Array.from(byDispatcher.entries()).map(([name, b]) => {
-            const truckCount = b.trucks.size || b.drivers.size || 1;
-            const driverCount = b.drivers.size || truckCount;
+            // Headcount (drivers) is the consistent denominator throughout —
+            // truck counts undercount dispatchers like "Wayne" who manage
+            // multiple drivers per truck.
+            const driverCount = b.drivers.size || b.trucks.size || 1;
             const capacity = driverCount * windowDays;
             const utilization = capacity > 0 ? (b.productiveDays / capacity) * 100 : 0;
             const eventShare = capacity > 0 ? (b.eventDays / capacity) * 100 : 0;
@@ -112,12 +114,11 @@ export function DispatcherRankings({
 
             return {
                 name,
-                trucks: b.trucks.size || b.drivers.size,
                 drivers: driverCount,
                 totalNet: b.pl,
                 totalGross: b.gross,
-                avgNet: b.pl / truckCount / weeks,
-                avgGross: b.gross / truckCount / weeks,
+                avgNet: b.pl / driverCount / weeks,
+                avgGross: b.gross / driverCount / weeks,
                 rpm: b.miles > 0 ? b.gross / b.miles : 0,
                 utilization,
                 eventShare,
@@ -287,7 +288,6 @@ function UtilizationChip({ dispatcher: d }: { dispatcher: Ranked }) {
 
 interface Ranked {
     name: string;
-    trucks: number;
     drivers: number;
     totalNet: number;
     totalGross: number;
@@ -323,7 +323,7 @@ function RankRow({
         case 'total_net':
             primaryValue = d.totalNet;
             primary = fmtCurrency(d.totalNet);
-            subValue = `${fmtCurrency(d.avgNet)} Avg Net / Truck / wk`;
+            subValue = `${fmtCurrency(d.avgNet)} Avg Net / Driver / wk`;
             break;
         case 'avg_net':
             primaryValue = d.avgNet;
@@ -333,7 +333,7 @@ function RankRow({
         case 'total_gross':
             primaryValue = d.totalGross;
             primary = fmtCurrency(d.totalGross);
-            subValue = `${fmtCurrency(d.avgGross)} Avg Gross / Truck / wk`;
+            subValue = `${fmtCurrency(d.avgGross)} Avg Gross / Driver / wk`;
             break;
         case 'avg_gross':
             primaryValue = d.avgGross;
@@ -381,7 +381,7 @@ function RankRow({
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground tabular-nums">
                 <span>
-                    {d.trucks} truck{d.trucks !== 1 ? 's' : ''}
+                    {d.drivers} driver{d.drivers !== 1 ? 's' : ''}
                 </span>
                 <UtilizationChip dispatcher={d} />
                 {!isNetFamily && (

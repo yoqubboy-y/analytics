@@ -1,10 +1,14 @@
 export type TeamRole = 'owner' | 'admin' | 'member' | 'viewer';
 
+export type TeamDataSource = 'analytics_db' | 'xlsx';
+
 export type Team = {
     id: number;
     name: string;
     slug: string;
     isPersonal: boolean;
+    dataSource?: TeamDataSource;
+    externalCompanyId?: number | null;
     role?: TeamRole;
     roleLabel?: string;
     isCurrent?: boolean;

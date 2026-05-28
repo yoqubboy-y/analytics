@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Analytics;
 
 use App\Enums\DriverContractType;
 use App\Enums\ExpenseCalculationType;
+use App\Enums\TeamDataSource;
+use App\Enums\TeamPermission;
 use App\Http\Controllers\Controller;
 use App\Models\DriverConfig;
 use App\Models\DriverConfigRate;
@@ -13,6 +15,9 @@ use App\Models\TeamExpenseRate;
 use App\Services\AnalyticsService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -23,14 +28,56 @@ class ConfigurationController extends Controller
 
     public function index(Team $currentTeam): Response
     {
+        $isXlsx = $currentTeam->data_source === TeamDataSource::Xlsx;
+
         $driverNames = $this->analytics->getDriverNames($currentTeam);
 
+        $user = Auth::user();
+        $lastImport = $currentTeam->xlsxDriverDays()->latest('id')->first();
+
+        $importSummary = [
+            'total_rows' => $currentTeam->xlsxDriverDays()->count(),
+            'min_date' => optional($currentTeam->xlsxDriverDays()->min('work_date'))
+                ? (string) $currentTeam->xlsxDriverDays()->min('work_date')
+                : null,
+            'max_date' => optional($currentTeam->xlsxDriverDays()->max('work_date'))
+                ? (string) $currentTeam->xlsxDriverDays()->max('work_date')
+                : null,
+            'last_filename' => $lastImport?->source_filename,
+            'last_format' => $lastImport?->source_format,
+            'last_imported_at' => optional($lastImport?->created_at)?->toDateTimeString(),
+        ];
+
+        // Distinct (driver_name, truck_number) pairs from this team's
+        // imported rows, keyed by the same `external_driver_key` the
+        // service uses for aggregation. Drives the XLSX driver picker.
+        $importedDrivers = $isXlsx
+            ? $currentTeam->xlsxDriverDays()
+                ->selectRaw('driver_name, truck_number, MIN(dispatcher) as dispatcher')
+                ->groupBy('driver_name', 'truck_number')
+                ->orderBy('driver_name')
+                ->get()
+                ->map(fn ($row) => [
+                    'external_driver_key' => $this->analytics->xlsxDriverKey($row->driver_name, $row->truck_number),
+                    'driver_name' => $row->driver_name,
+                    'truck_number' => $row->truck_number,
+                ])
+                ->values()
+            : collect();
+
         return Inertia::render('analytics/configuration', [
+            'dataSource' => $currentTeam->data_source->value,
+            'canImport' => $user?->hasTeamPermission($currentTeam, TeamPermission::ImportXlsx) ?? false,
+            'canChangeDataSource' => $user?->hasTeamPermission($currentTeam, TeamPermission::UpdateTeam) ?? false,
+            'importSummary' => $importSummary,
+            'importedDrivers' => $importedDrivers,
             'driverConfigs' => $currentTeam->driverConfigs->load('rates')
                 ->map(fn (DriverConfig $dc) => [
                     'id' => $dc->id,
                     'external_driver_id' => $dc->external_driver_id,
-                    'driver_name' => $driverNames->get($dc->external_driver_id, "Driver #{$dc->external_driver_id}"),
+                    'external_driver_key' => $dc->external_driver_key,
+                    'driver_name' => $this->resolveDriverName($dc, $driverNames),
+                    'dispatcher' => $dc->dispatcher,
                     'contract_type' => $dc->contract_type->value,
                     'current_rate' => $dc->currentRate(),
                     'rates' => $dc->rates->sortByDesc('effective_from')->values()
@@ -72,8 +119,19 @@ class ConfigurationController extends Controller
 
     public function storeDriverConfig(Request $request, Team $currentTeam): RedirectResponse
     {
+        $isXlsx = $currentTeam->data_source === TeamDataSource::Xlsx;
+
         $data = $request->validate([
-            'external_driver_id' => ['required', 'integer', 'min:1', Rule::unique('driver_configs')->where('team_id', $currentTeam->id)],
+            // Analytics-DB teams identify drivers by numeric id; XLSX teams
+            // by the `name|TRUCK` key produced from the import. Exactly one
+            // applies per team.
+            'external_driver_id' => $isXlsx
+                ? ['nullable']
+                : ['required', 'integer', 'min:1', Rule::unique('driver_configs')->where('team_id', $currentTeam->id)],
+            'external_driver_key' => $isXlsx
+                ? ['required', 'string', 'max:255', Rule::unique('driver_configs')->where('team_id', $currentTeam->id)]
+                : ['nullable'],
+            'dispatcher' => ['nullable', 'string', 'max:255'],
             'contract_type' => ['required', Rule::enum(DriverContractType::class)],
             'tariff_rate' => ['required', 'numeric', 'min:0', 'max:9999'],
             'effective_from' => ['required', 'date'],
@@ -81,7 +139,9 @@ class ConfigurationController extends Controller
         ]);
 
         $config = $currentTeam->driverConfigs()->create([
-            'external_driver_id' => $data['external_driver_id'],
+            'external_driver_id' => $isXlsx ? null : $data['external_driver_id'],
+            'external_driver_key' => $isXlsx ? $data['external_driver_key'] : null,
+            'dispatcher' => $data['dispatcher'] ?? null,
             'contract_type' => $data['contract_type'],
         ]);
 
@@ -100,9 +160,13 @@ class ConfigurationController extends Controller
 
         $data = $request->validate([
             'contract_type' => ['required', Rule::enum(DriverContractType::class)],
+            'dispatcher' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $driverConfig->update($data);
+        $driverConfig->update([
+            'contract_type' => $data['contract_type'],
+            'dispatcher' => $data['dispatcher'] ?? null,
+        ]);
 
         return back();
     }
@@ -300,6 +364,23 @@ class ConfigurationController extends Controller
     private function ensureBelongsToTeam(int $teamId, Team $currentTeam): void
     {
         abort_unless($teamId === $currentTeam->id, 403);
+    }
+
+    /**
+     * Pick the human-readable name for a config row. Analytics-DB configs
+     * look up the name in the remote drivers table; XLSX configs already
+     * carry the name in the `external_driver_key` (`lower(name)|TRUCK`).
+     */
+    private function resolveDriverName(DriverConfig $dc, Collection $driverNames): string
+    {
+        if ($dc->external_driver_id !== null) {
+            return $driverNames->get($dc->external_driver_id, "Driver #{$dc->external_driver_id}");
+        }
+
+        // `<lower-name>|<TRUCK>` — strip the truck and re-capitalise.
+        $name = explode('|', (string) $dc->external_driver_key)[0] ?? '';
+
+        return $name === '' ? '(unknown)' : Str::title($name);
     }
 
     /**

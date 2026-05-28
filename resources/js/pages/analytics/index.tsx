@@ -2,6 +2,11 @@ import { Head, router, usePage } from '@inertiajs/react';
 import { DownloadIcon, Loader2Icon, Share2Icon } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { index as analyticsIndex } from '@/actions/App/Http/Controllers/Analytics/AnalyticsController';
+import {
+    AddDriverConfigDialog,
+    type DialogContractType,
+    type DialogImportedDriver,
+} from '@/components/analytics/add-driver-config-dialog';
 import { DispatcherChart } from '@/components/analytics/dispatcher-chart';
 import { DispatcherRankings } from '@/components/analytics/dispatcher-rankings';
 import { KeyMetrics } from '@/components/analytics/key-metrics';
@@ -22,6 +27,10 @@ type Props = {
     keyMetrics: KeyMetricsData;
     canManage: boolean;
     shares: DashboardShareItem[];
+    dataSource: 'analytics_db' | 'xlsx';
+    contractTypes: DialogContractType[];
+    importedDrivers: DialogImportedDriver[];
+    takenDriverKeys: string[];
 };
 
 export default function AnalyticsDashboard({
@@ -32,6 +41,10 @@ export default function AnalyticsDashboard({
     keyMetrics,
     canManage,
     shares,
+    dataSource,
+    contractTypes,
+    importedDrivers,
+    takenDriverKeys,
 }: Props) {
     const page = usePage();
     const slug = page.props.currentTeam?.slug ?? '';
@@ -39,6 +52,36 @@ export default function AnalyticsDashboard({
     const dashboardRef = useRef<HTMLDivElement>(null);
     const [shareOpen, setShareOpen] = useState(false);
     const [downloading, setDownloading] = useState(false);
+
+    // In-place dialog state for the "Configure" button in the PnL table.
+    // Opens with a prefill derived from the clicked row so the user just
+    // picks contract/rate without re-entering the driver identity.
+    const [configureDialogOpen, setConfigureDialogOpen] = useState(false);
+    const [configurePrefill, setConfigurePrefill] = useState<{
+        external_driver_id?: string;
+        external_driver_key?: string;
+        driver_name?: string;
+    } | null>(null);
+
+    const takenKeysSet = useMemo(() => new Set(takenDriverKeys), [takenDriverKeys]);
+
+    function handleConfigureDriver(row: Row) {
+        setConfigurePrefill({
+            external_driver_id:
+                row.external_driver_key == null && row.driver_id != null
+                    ? String(row.driver_id)
+                    : undefined,
+            external_driver_key: row.external_driver_key ?? undefined,
+            driver_name: row.driver_name,
+        });
+        setConfigureDialogOpen(true);
+    }
+
+    function handleConfigureSuccess() {
+        // Reload the analytics rows so the newly-configured driver flips
+        // from amber "(no config)" to a normal row with salary/PL.
+        router.reload({ only: ['rows', 'keyMetrics', 'takenDriverKeys'] });
+    }
 
     // Number of (whole) weeks in the window — used to normalise per-truck
     // averages so a multi-week view shows weekly figures, not window totals.
@@ -143,19 +186,34 @@ export default function AnalyticsDashboard({
                         expenses={expenses}
                         title="P&L Report"
                         canDownload={canManage}
+                        onConfigureDriver={canManage ? handleConfigureDriver : undefined}
                     />
                 </div>
             </div>
 
             {canManage && (
-                <ShareDashboardModal
-                    open={shareOpen}
-                    onOpenChange={setShareOpen}
-                    slug={slug}
-                    startDate={startDate}
-                    endDate={endDate}
-                    shares={shares}
-                />
+                <>
+                    <ShareDashboardModal
+                        open={shareOpen}
+                        onOpenChange={setShareOpen}
+                        slug={slug}
+                        startDate={startDate}
+                        endDate={endDate}
+                        shares={shares}
+                    />
+
+                    <AddDriverConfigDialog
+                        open={configureDialogOpen}
+                        onOpenChange={setConfigureDialogOpen}
+                        slug={slug}
+                        dataSource={dataSource}
+                        contractTypes={contractTypes}
+                        importedDrivers={importedDrivers}
+                        takenDriverKeys={takenKeysSet}
+                        prefill={configurePrefill}
+                        onSuccess={handleConfigureSuccess}
+                    />
+                </>
             )}
         </>
     );

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\ExpenseCalculationType;
+use App\Enums\TeamDataSource;
 use App\Models\DriverConfig;
 use App\Models\Team;
 use App\Models\TeamExpense;
@@ -23,6 +24,10 @@ class AnalyticsService
      */
     public function weeklyReport(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): Collection
     {
+        if ($team->data_source === TeamDataSource::Xlsx) {
+            return $this->weeklyReportFromXlsx($team, $startDate, $endDate);
+        }
+
         /** @var Collection<int, TeamExpense> $expenses */
         $expenses = $team->expenses->load('rates');
 
@@ -338,6 +343,11 @@ class AnalyticsService
 
         $profitLoss = round($gross - $financials['salary'] - $financials['total_expenses'], 2);
 
+        // The displayed "Total Exp." column rolls salary inside so the row
+        // reads as `Gross − Total Exp. = P&L`. The per-expense breakdown
+        // (`expenses` map) and the `salary` column stay unchanged.
+        $totalExpensesWithSalary = round($financials['total_expenses'] + $financials['salary'], 2);
+
         return [
             'driver_id' => $row->driver_id,
             'driver_name' => $row->driver_name,
@@ -350,7 +360,7 @@ class AnalyticsService
             'rpm' => $rpm,
             'salary' => $financials['salary'],
             'expenses' => $financials['expenses'],
-            'total_expenses' => $financials['total_expenses'],
+            'total_expenses' => $totalExpensesWithSalary,
             'profit_loss' => $profitLoss,
             'missing_config' => false,
             'is_total' => false,
@@ -461,6 +471,13 @@ class AnalyticsService
      */
     public function getDriverNames(Team $team): Collection
     {
+        if ($team->data_source === TeamDataSource::Xlsx) {
+            // XLSX-backed teams don't pull from the analytics DB; an empty
+            // map keeps `ConfigurationController` happy (it falls back to
+            // "Driver #{id}" labels for any unmatched configs).
+            return collect();
+        }
+
         $results = DB::connection('analytics')->select(
             <<<'SQL'
                 SELECT d.id AS driver_id,
@@ -499,6 +516,8 @@ class AnalyticsService
             );
         }
 
+        $totalSalary = (float) $configured->sum('salary');
+
         return [
             'driver_id' => null,
             'driver_name' => 'TOTAL',
@@ -509,9 +528,11 @@ class AnalyticsService
             'total_gross' => $totalGross,
             'total_miles' => $totalMiles,
             'rpm' => $totalMiles > 0 ? round($totalGross / $totalMiles, 2) : 0.0,
-            'salary' => $configured->sum('salary'),
+            'salary' => $totalSalary,
             'expenses' => $expenseTotals,
-            'total_expenses' => round(array_sum($expenseTotals), 2),
+            // Matches per-row semantics: Total Exp. includes salary so the
+            // TOTAL row visibly satisfies `Gross − Total Exp. = P&L`.
+            'total_expenses' => round(array_sum($expenseTotals) + $totalSalary, 2),
             'profit_loss' => $configured->sum('profit_loss'),
             'missing_config' => false,
             'is_total' => true,
@@ -533,6 +554,10 @@ class AnalyticsService
      */
     public function weeklyKeyMetrics(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): array
     {
+        if ($team->data_source === TeamDataSource::Xlsx) {
+            return $this->weeklyKeyMetricsFromXlsx($team, $startDate, $endDate);
+        }
+
         $companyId = $team->external_company_id;
         $start = $startDate->toDateString();
         $endPlusOne = $endDate->copy()->addDay()->toDateString();
@@ -672,6 +697,260 @@ class AnalyticsService
         return [
             'drivers' => [
                 'total' => $total,
+            ],
+            'compound_utilization_rate' => round($utilizationRate, 2),
+            'event_breakdown' => $breakdown,
+        ];
+    }
+
+    /**
+     * Build the weekly P&L report for an XLSX-backed team. Aggregates
+     * `xlsx_driver_days` rows by driver (name + truck), mirroring the shape
+     * of the analytics-DB path. Salary, expenses, and P&L are deferred —
+     * every driver row is flagged `missing_config` until DriverConfig
+     * matching for XLSX teams is wired up.
+     *
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function weeklyReportFromXlsx(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): Collection
+    {
+        /** @var Collection<int, TeamExpense> $expenses */
+        $expenses = $team->expenses->load('rates');
+
+        // XLSX teams identify drivers by the same `xlsxDriverKey()` string
+        // we use to group imported rows.
+        /** @var Collection<string, DriverConfig> $driverConfigs */
+        $driverConfigs = $team->driverConfigs->load('rates')->keyBy('external_driver_key');
+
+        $rows = $team->xlsxDriverDays()
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
+            ->get();
+
+        // Group by driver — driver_name + truck_number is the natural identity
+        // in the imported sheets. Trim and case-normalise so the same driver
+        // across weeks aggregates cleanly.
+        $grouped = $rows->groupBy(fn ($r) => $this->xlsxDriverKey($r->driver_name, $r->truck_number));
+
+        $windowWeeks = $this->windowWeeks($startDate, $endDate);
+
+        $driverRows = $grouped->map(function (Collection $group, string $driverKey) use ($driverConfigs, $expenses, $windowWeeks) {
+            $first = $group->first();
+            $gross = (float) $group->sum('gross');
+            $miles = (float) $group->sum('miles');
+            // "Productive" days are the distinct workdates where revenue ran.
+            $days = $group->filter(fn ($r) => (float) $r->gross > 0)
+                ->pluck('work_date')
+                ->map(fn ($d) => (string) $d)
+                ->unique()
+                ->count();
+
+            $rpm = $miles > 0 ? round($gross / $miles, 2) : 0.0;
+            $driverConfig = $driverConfigs->get($driverKey);
+
+            // Build per-(driver, ISO week) buckets so salary & expenses use
+            // each week's own gross/miles/tariff (matching the analytics-DB
+            // path's `fetchWeeklyData` shape).
+            $weeklyBuckets = $group
+                ->groupBy(fn ($r) => CarbonImmutable::parse((string) $r->work_date)->startOfWeek()->toDateString())
+                ->map(fn (Collection $weekRows, string $weekStart) => (object) [
+                    'week_start' => $weekStart,
+                    'week_gross' => (float) $weekRows->sum('gross'),
+                    'week_miles' => (float) $weekRows->sum('miles'),
+                ])
+                ->values();
+
+            $hasTariff = $driverConfig
+                && $weeklyBuckets->contains(fn (object $b) => $driverConfig->tariffRateAsOf(CarbonImmutable::parse($b->week_start)) !== null);
+
+            if (! $driverConfig || (! $hasTariff && $weeklyBuckets->isNotEmpty())) {
+                return [
+                    'driver_id' => $this->xlsxDriverPseudoId($first->driver_name, $first->truck_number),
+                    'external_driver_key' => $driverKey,
+                    'driver_name' => $first->driver_name,
+                    'dispatcher' => $driverConfig?->dispatcher ?? $first->dispatcher,
+                    'truck_number' => $first->truck_number,
+                    'type' => $driverConfig?->contract_type->label(),
+                    'days' => $days,
+                    'total_gross' => round($gross, 2),
+                    'total_miles' => round($miles, 2),
+                    'rpm' => $rpm,
+                    'salary' => null,
+                    'expenses' => [],
+                    'total_expenses' => null,
+                    'profit_loss' => null,
+                    'missing_config' => true,
+                    'is_total' => false,
+                ];
+            }
+
+            $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks);
+            $profitLoss = round($gross - $financials['salary'] - $financials['total_expenses'], 2);
+            $totalExpensesWithSalary = round($financials['total_expenses'] + $financials['salary'], 2);
+
+            return [
+                'driver_id' => $this->xlsxDriverPseudoId($first->driver_name, $first->truck_number),
+                'external_driver_key' => $driverKey,
+                'driver_name' => $first->driver_name,
+                'dispatcher' => $driverConfig->dispatcher ?? $first->dispatcher,
+                'truck_number' => $first->truck_number,
+                'type' => $driverConfig->contract_type->label(),
+                'days' => $days,
+                'total_gross' => round($gross, 2),
+                'total_miles' => round($miles, 2),
+                'rpm' => $rpm,
+                'salary' => $financials['salary'],
+                'expenses' => $financials['expenses'],
+                'total_expenses' => $totalExpensesWithSalary,
+                'profit_loss' => $profitLoss,
+                'missing_config' => false,
+                'is_total' => false,
+            ];
+        })
+            ->values()
+            ->sortBy([
+                ['dispatcher', 'asc'],
+                ['driver_name', 'asc'],
+            ])
+            ->values();
+
+        $totals = $this->computeXlsxTotals($driverRows, $expenses);
+
+        return $driverRows->push($totals);
+    }
+
+    /**
+     * Per-team TOTAL row for XLSX-backed reports. Unlike `computeTotals` it
+     * does not exclude `missing_config` rows from money sums, since for
+     * XLSX teams every row is currently flagged that way.
+     *
+     * @param  Collection<int, array<string, mixed>>  $rows
+     * @return array<string, mixed>
+     */
+    private function computeXlsxTotals(Collection $rows, Collection $expenses): array
+    {
+        $configured = $rows->where('missing_config', false);
+
+        // Money totals (gross/miles/days) come from EVERY row so unconfigured
+        // drivers' fleet contribution stays visible; salary/expenses/P&L only
+        // come from configured rows since the others have null financials.
+        $totalGross = (float) $rows->sum('total_gross');
+        $totalMiles = (float) $rows->sum('total_miles');
+
+        /** @var array<string, float> $expenseTotals */
+        $expenseTotals = [];
+        foreach ($expenses as $expense) {
+            $expenseTotals[$expense->name] = round(
+                $configured->sum(fn ($r) => $r['expenses'][$expense->name] ?? 0.0),
+                2
+            );
+        }
+        $hasFinancials = $configured->isNotEmpty();
+        $totalSalary = (float) $configured->sum('salary');
+
+        return [
+            'driver_id' => null,
+            'driver_name' => 'TOTAL',
+            'dispatcher' => '',
+            'truck_number' => '',
+            'type' => '',
+            'days' => $rows->sum('days'),
+            'total_gross' => $totalGross,
+            'total_miles' => $totalMiles,
+            'rpm' => $totalMiles > 0 ? round($totalGross / $totalMiles, 2) : 0.0,
+            'salary' => $hasFinancials ? $totalSalary : null,
+            'expenses' => $expenseTotals,
+            // Mirrors per-row semantics: Total Exp. includes salary.
+            'total_expenses' => $hasFinancials ? round(array_sum($expenseTotals) + $totalSalary, 2) : null,
+            'profit_loss' => $hasFinancials ? $configured->sum('profit_loss') : null,
+            'missing_config' => false,
+            'is_total' => true,
+        ];
+    }
+
+    /**
+     * Stable grouping key for a driver inside a single team's import.
+     * Combines normalised name + truck — multiple "John Smith" entries can
+     * exist on different trucks; one driver moving trucks within a window
+     * splits into separate rows by design.
+     */
+    public function xlsxDriverKey(string $driverName, ?string $truckNumber): string
+    {
+        $name = strtolower(preg_replace('/\s+/', ' ', trim($driverName)) ?: $driverName);
+        $truck = strtoupper(trim($truckNumber ?? ''));
+
+        return $name.'|'.$truck;
+    }
+
+    /**
+     * 32-bit pseudo-id derived from the driver key. The frontend uses
+     * `driver_id` as a Set key for unique-driver counts; collisions across
+     * teams don't matter since rows are always rendered within one team.
+     */
+    private function xlsxDriverPseudoId(string $driverName, ?string $truckNumber): int
+    {
+        return crc32($this->xlsxDriverKey($driverName, $truckNumber));
+    }
+
+    /**
+     * Compute KeyMetrics for an XLSX-backed team. Uses the imported daily
+     * rows directly: productive driver-days come from rows with `gross > 0`,
+     * event driver-days from `status`-only rows (HOME / TRANSIT / REST / …).
+     *
+     * @return array{
+     *     drivers: array{total: int},
+     *     compound_utilization_rate: float,
+     *     event_breakdown: array<int, array{type: string, days: float, percentage: float}>,
+     * }
+     */
+    private function weeklyKeyMetricsFromXlsx(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): array
+    {
+        $rows = $team->xlsxDriverDays()
+            ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
+            ->get();
+
+        // Distinct drivers active in this window.
+        $totalDrivers = $rows
+            ->map(fn ($r) => $this->xlsxDriverKey($r->driver_name, $r->truck_number))
+            ->unique()
+            ->count();
+
+        // Productive driver-days: each (driver, work_date) where any gross ran.
+        $productivePairs = $rows
+            ->filter(fn ($r) => (float) $r->gross > 0)
+            ->map(fn ($r) => $this->xlsxDriverKey($r->driver_name, $r->truck_number).'|'.(string) $r->work_date)
+            ->unique();
+        $productiveDays = $productivePairs->count();
+
+        // Per-status driver-day buckets (collapsing per-(driver, date)).
+        $eventBuckets = $rows
+            ->filter(fn ($r) => (float) $r->gross <= 0 && $r->status)
+            ->groupBy(fn ($r) => strtoupper(trim((string) $r->status)))
+            ->map(fn (Collection $group) => $group
+                ->map(fn ($r) => $this->xlsxDriverKey($r->driver_name, $r->truck_number).'|'.(string) $r->work_date)
+                ->unique()
+                ->count()
+            );
+
+        $windowDays = (int) $startDate->copy()->startOfDay()->diffInDays($endDate->copy()->startOfDay()) + 1;
+        $capacityDays = $totalDrivers * $windowDays;
+
+        $utilizationRate = $capacityDays > 0
+            ? min(100.0, ($productiveDays / $capacityDays) * 100.0)
+            : 0.0;
+
+        $breakdown = $eventBuckets
+            ->map(fn (int $days, string $type) => [
+                'type' => $type,
+                'days' => (float) $days,
+                'percentage' => $capacityDays > 0 ? round(($days / $capacityDays) * 100.0, 2) : 0.0,
+            ])
+            ->sortByDesc('days')
+            ->values()
+            ->all();
+
+        return [
+            'drivers' => [
+                'total' => $totalDrivers,
             ],
             'compound_utilization_rate' => round($utilizationRate, 2),
             'event_breakdown' => $breakdown,

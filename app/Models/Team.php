@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Concerns\GeneratesUniqueTeamSlugs;
+use App\Enums\TeamDataSource;
 use App\Enums\TeamRole;
 use Database\Factories\TeamFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -12,7 +13,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable(['name', 'slug', 'is_personal', 'external_company_id'])]
+#[Fillable(['name', 'slug', 'is_personal', 'external_company_id', 'data_source'])]
 class Team extends Model
 {
     /** @use HasFactory<TeamFactory> */
@@ -102,6 +103,26 @@ class Team extends Model
     }
 
     /**
+     * Daily driver rows imported from XLSX uploads (XLSX-backed teams).
+     *
+     * @return HasMany<XlsxDriverDay, $this>
+     */
+    public function xlsxDriverDays(): HasMany
+    {
+        return $this->hasMany(XlsxDriverDay::class);
+    }
+
+    /**
+     * Background import records for XLSX uploads.
+     *
+     * @return HasMany<XlsxImport, $this>
+     */
+    public function xlsxImports(): HasMany
+    {
+        return $this->hasMany(XlsxImport::class);
+    }
+
+    /**
      * Get all shareable dashboard links for this team.
      *
      * @return HasMany<DashboardShare, $this>
@@ -120,6 +141,7 @@ class Team extends Model
     {
         return [
             'is_personal' => 'boolean',
+            'data_source' => TeamDataSource::class,
         ];
     }
 
