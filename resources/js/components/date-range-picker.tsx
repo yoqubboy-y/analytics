@@ -108,6 +108,11 @@ export function DateRangePicker({
         to: end,
     });
     const [displayMonth, setDisplayMonth] = useState<Date>(start);
+    // Click step within the current open session: 0 = anchor the start on
+    // next click; 1 = next click completes the range. This bypasses
+    // react-day-picker's auto-extend behaviour so clicks never silently
+    // mutate the existing range and close the popover.
+    const [step, setStep] = useState<0 | 1>(0);
 
     const rangeText = `${format(start, 'MMM d')} – ${format(end, 'MMM d, yyyy')}`;
 
@@ -128,13 +133,26 @@ export function DateRangePicker({
         apply(from, to);
     }
 
-    function handleSelect(range: DateRange | undefined) {
-        setDraft(range);
-
-        // Apply only once both ends are chosen.
-        if (range?.from && range?.to) {
-            apply(range.from, range.to);
+    function handleDayClick(day: Date) {
+        // First click of a new selection (popover just opened, preset just
+        // applied, or previous range was completed): anchor the start.
+        if (step === 0) {
+            setDraft({ from: day, to: undefined });
+            setStep(1);
+            return;
         }
+
+        // Second click: complete the range, sorting if the user clicked an
+        // earlier date second.
+        if (!draft?.from) {
+            setDraft({ from: day, to: undefined });
+            setStep(1);
+            return;
+        }
+
+        const [a, b] = day < draft.from ? [day, draft.from] : [draft.from, day];
+        apply(a, b);
+        setStep(0);
     }
 
     function shiftPeriod(direction: -1 | 1) {
@@ -152,6 +170,7 @@ export function DateRangePicker({
             // Reset the draft to the live range whenever the popover reopens.
             setDraft({ from: start, to: end });
             setDisplayMonth(start);
+            setStep(0);
         }
 
         setOpen(next);
@@ -255,7 +274,10 @@ export function DateRangePicker({
                                 weekStartsOn={1}
                                 numberOfMonths={2}
                                 selected={draft}
-                                onSelect={handleSelect}
+                                onSelect={() => {
+                                    /* handled in onDayClick */
+                                }}
+                                onDayClick={handleDayClick}
                                 month={displayMonth}
                                 onMonthChange={setDisplayMonth}
                                 showOutsideDays={false}

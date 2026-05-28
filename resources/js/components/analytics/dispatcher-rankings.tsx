@@ -7,6 +7,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { Row } from './pnl-table';
 import { WidgetDownloadButton } from './widget-download-button';
@@ -50,6 +51,8 @@ export function DispatcherRankings({
             pl: number;
             gross: number;
             miles: number;
+            productiveDays: number;
+            eventDays: number;
             trucks: Set<string>;
             drivers: Set<number>;
         };
@@ -67,6 +70,8 @@ export function DispatcherRankings({
                     pl: 0,
                     gross: 0,
                     miles: 0,
+                    productiveDays: 0,
+                    eventDays: 0,
                     trucks: new Set(),
                     drivers: new Set(),
                 });
@@ -77,6 +82,15 @@ export function DispatcherRankings({
             entry.gross += row.total_gross;
             entry.miles += row.total_miles;
 
+            // Rows with positive gross have row.days populated from LOAD/DRAFT
+            // boards (productive). Zero-gross rows are event-only drivers whose
+            // days come from EVENT boards.
+            if (row.total_gross > 0) {
+                entry.productiveDays += row.days;
+            } else {
+                entry.eventDays += row.days;
+            }
+
             if (row.truck_number) {
                 entry.trucks.add(row.truck_number);
             }
@@ -86,17 +100,32 @@ export function DispatcherRankings({
             }
         }
 
+        const windowDays = Math.max(1, weeks * 7);
+
         const list = Array.from(byDispatcher.entries()).map(([name, b]) => {
             const truckCount = b.trucks.size || b.drivers.size || 1;
+            const driverCount = b.drivers.size || truckCount;
+            const capacity = driverCount * windowDays;
+            const utilization = capacity > 0 ? (b.productiveDays / capacity) * 100 : 0;
+            const eventShare = capacity > 0 ? (b.eventDays / capacity) * 100 : 0;
+            const idleShare = Math.max(0, 100 - utilization - eventShare);
 
             return {
                 name,
                 trucks: b.trucks.size || b.drivers.size,
+                drivers: driverCount,
                 totalNet: b.pl,
                 totalGross: b.gross,
                 avgNet: b.pl / truckCount / weeks,
                 avgGross: b.gross / truckCount / weeks,
                 rpm: b.miles > 0 ? b.gross / b.miles : 0,
+                utilization,
+                eventShare,
+                idleShare,
+                productiveDays: b.productiveDays,
+                eventDays: b.eventDays,
+                capacity,
+                windowDays,
             };
         });
 
@@ -204,14 +233,74 @@ export function DispatcherRankings({
     );
 }
 
+function UtilizationChip({ dispatcher: d }: { dispatcher: Ranked }) {
+    const utilTone =
+        d.utilization >= 80
+            ? 'text-emerald-500'
+            : d.utilization >= 50
+              ? 'text-amber-500'
+              : 'text-red-500';
+
+    const fmtDays = (n: number) =>
+        `${n.toLocaleString('en-US', { maximumFractionDigits: 1 })} day${n === 1 ? '' : 's'}`;
+
+    return (
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <span className="cursor-help underline decoration-dotted underline-offset-2">
+                    Util <span className={utilTone}>{d.utilization.toFixed(1)}%</span>
+                </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs space-y-1.5 p-3">
+                <p className="font-semibold">Utilization breakdown</p>
+                <p className="text-[11px] leading-snug opacity-90">
+                    {fmtDays(d.productiveDays)} on loads out of{' '}
+                    {fmtDays(d.capacity)} available ({d.drivers} driver
+                    {d.drivers !== 1 ? 's' : ''} × {d.windowDays} day
+                    {d.windowDays !== 1 ? 's' : ''}).
+                </p>
+                <div className="space-y-0.5 text-[11px] tabular-nums">
+                    <div className="flex justify-between gap-3">
+                        <span>Productive</span>
+                        <span>{d.utilization.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                        <span>Events (hometime, repair, etc.)</span>
+                        <span>{d.eventShare.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                        <span>Idle / unaccounted</span>
+                        <span>{d.idleShare.toFixed(1)}%</span>
+                    </div>
+                </div>
+                <p className="text-[11px] leading-snug opacity-80">
+                    {d.utilization >= 80
+                        ? 'Fleet running near full revenue capacity.'
+                        : d.eventShare >= d.idleShare
+                          ? 'Lost capacity is mostly drivers on events (hometime, repair, vacation).'
+                          : 'Lost capacity is mostly idle trucks with no boards posted.'}
+                </p>
+            </TooltipContent>
+        </Tooltip>
+    );
+}
+
 interface Ranked {
     name: string;
     trucks: number;
+    drivers: number;
     totalNet: number;
     totalGross: number;
     avgNet: number;
     avgGross: number;
     rpm: number;
+    utilization: number;
+    eventShare: number;
+    idleShare: number;
+    productiveDays: number;
+    eventDays: number;
+    capacity: number;
+    windowDays: number;
 }
 
 function RankRow({
@@ -294,6 +383,7 @@ function RankRow({
                 <span>
                     {d.trucks} truck{d.trucks !== 1 ? 's' : ''}
                 </span>
+                <UtilizationChip dispatcher={d} />
                 {!isNetFamily && (
                     <span>
                         Net{' '}
