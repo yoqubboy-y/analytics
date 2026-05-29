@@ -15,6 +15,14 @@ use Illuminate\Support\Facades\DB;
 class AnalyticsService
 {
     /**
+     * Event titles that represent productive work (the driver is moving
+     * with intent — running a load even though the board isn't a LOAD /
+     * DRAFT). Counted as productive in the utilization rate and excluded
+     * from the event breakdown.
+     */
+    private const PRODUCTIVE_EVENT_TITLES = ['TRANSIT', 'ENROUTE'];
+
+    /**
      * Get weekly P&L report rows for a team.
      *
      * Fetches raw financial data from the analytics DB, merges with local
@@ -678,13 +686,19 @@ class AnalyticsService
         $windowDays = (int) $startDate->copy()->startOfDay()->diffInDays($endDate->copy()->startOfDay()) + 1;
         $capacityDays = $total * $windowDays;
 
+        // TRANSIT / ENROUTE are part of running a load, not lost time — fold
+        // them into productive days and exclude from the breakdown so they
+        // don't appear to deduct from utilization.
         $productiveDays = ($byType['LOAD'] ?? 0.0) + ($byType['DRAFT'] ?? 0.0);
+        foreach (self::PRODUCTIVE_EVENT_TITLES as $productiveTitle) {
+            $productiveDays += $byType[$productiveTitle] ?? 0.0;
+        }
         $utilizationRate = $capacityDays > 0
             ? min(100.0, ($productiveDays / $capacityDays) * 100.0)
             : 0.0;
 
         $breakdown = $byType
-            ->except(['LOAD', 'DRAFT'])
+            ->except(array_merge(['LOAD', 'DRAFT'], self::PRODUCTIVE_EVENT_TITLES))
             ->map(fn (float $days, string $type) => [
                 'type' => $type,
                 'days' => round($days, 2),
@@ -914,17 +928,27 @@ class AnalyticsService
             ->unique()
             ->count();
 
-        // Productive driver-days: each (driver, work_date) where any gross ran.
+        // Normalise the status cell once so both filters below see the same
+        // bucket key.
+        $normalizeStatus = fn ($r) => strtoupper(trim((string) ($r->status ?? '')));
+
+        // Productive driver-days: any gross ran OR the day was spent in a
+        // status that represents active load work (TRANSIT / ENROUTE).
         $productivePairs = $rows
-            ->filter(fn ($r) => (float) $r->gross > 0)
+            ->filter(fn ($r) => (float) $r->gross > 0
+                || in_array($normalizeStatus($r), self::PRODUCTIVE_EVENT_TITLES, true))
             ->map(fn ($r) => $this->xlsxDriverKey($r->driver_name, $r->truck_number).'|'.(string) $r->work_date)
             ->unique();
         $productiveDays = $productivePairs->count();
 
         // Per-status driver-day buckets (collapsing per-(driver, date)).
+        // TRANSIT / ENROUTE are already folded into productive above, so
+        // they don't appear here either.
         $eventBuckets = $rows
-            ->filter(fn ($r) => (float) $r->gross <= 0 && $r->status)
-            ->groupBy(fn ($r) => strtoupper(trim((string) $r->status)))
+            ->filter(fn ($r) => (float) $r->gross <= 0
+                && $r->status
+                && ! in_array($normalizeStatus($r), self::PRODUCTIVE_EVENT_TITLES, true))
+            ->groupBy(fn ($r) => $normalizeStatus($r))
             ->map(fn (Collection $group) => $group
                 ->map(fn ($r) => $this->xlsxDriverKey($r->driver_name, $r->truck_number).'|'.(string) $r->work_date)
                 ->unique()

@@ -68,21 +68,22 @@ export function KeyMetrics({
     const miles = totalRow?.total_miles ?? 0;
     const rpm = totalRow?.rpm ?? 0;
 
-    // Fleet-wide weekly averages: divide by ALL active drivers so the figures
-    // reconcile with the "Total Drivers" count (gross ÷ drivers ÷ weeks), rather
-    // than only the trucks that grossed (which made the average look inflated).
+    // Fleet-wide weekly averages: divide by ALL active drivers so the
+    // figures reconcile with the "Total Drivers" count (gross ÷ drivers ÷
+    // weeks). Drivers — not trucks — because a driver without an assigned
+    // truck still counts as fleet headcount, otherwise the average inflates.
     const fleetSize = metrics.drivers.total;
     const perDriverWeek = (value: number) =>
         fleetSize > 0 ? value / fleetSize / weeks : 0;
 
-    const avgGrossPerTruck = perDriverWeek(gross);
-    const avgMilesPerTruck = perDriverWeek(miles);
+    const avgGrossPerDriver = perDriverWeek(gross);
+    const avgMilesPerDriver = perDriverWeek(miles);
     const totalDays = driverRows.reduce((sum, r) => sum + r.days, 0);
     const avgDailyMiles = totalDays > 0 ? miles / totalDays : 0;
 
     // Net (P&L) for the period, same fleet-wide per-week average as Gross.
     const net = totalRow?.profit_loss ?? 0;
-    const avgNetPerTruck = perDriverWeek(net);
+    const avgNetPerDriver = perDriverWeek(net);
     const margin = gross > 0 ? (net / gross) * 100 : 0;
     const netTone = net >= 0 ? 'text-emerald-500' : 'text-red-500';
 
@@ -128,10 +129,10 @@ export function KeyMetrics({
                     <div className="flex gap-4 text-right text-xs">
                         <div>
                             <p className="text-muted-foreground">
-                                Avg/Truck/wk
+                                Avg/Driver/wk
                             </p>
                             <p className="font-semibold text-emerald-500">
-                                {fmtCurrency(avgGrossPerTruck)}
+                                {fmtCurrency(avgGrossPerDriver)}
                             </p>
                         </div>
                         <div>
@@ -156,10 +157,10 @@ export function KeyMetrics({
                     <div className="flex gap-4 text-right text-xs">
                         <div>
                             <p className="text-muted-foreground">
-                                Avg/Truck/wk
+                                Avg/Driver/wk
                             </p>
                             <p className={cn('font-semibold', netTone)}>
-                                {fmtNet(avgNetPerTruck)}
+                                {fmtNet(avgNetPerDriver)}
                             </p>
                         </div>
                         <div>
@@ -184,10 +185,10 @@ export function KeyMetrics({
                     <div className="flex gap-4 text-right text-xs">
                         <div>
                             <p className="text-muted-foreground">
-                                Avg/Truck/wk
+                                Avg/Driver/wk
                             </p>
                             <p className="font-semibold text-orange-500">
-                                {avgMilesPerTruck.toFixed(2)}
+                                {avgMilesPerDriver.toFixed(2)}
                             </p>
                         </div>
                         <div>

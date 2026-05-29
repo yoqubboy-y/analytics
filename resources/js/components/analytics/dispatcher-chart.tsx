@@ -19,7 +19,7 @@ interface DispatcherChartProps {
     canDownload?: boolean;
 }
 
-type Mode = 'gross' | 'per_truck';
+type Mode = 'gross' | 'per_driver';
 
 const CHART_COLORS = [
     'var(--chart-1)',
@@ -123,8 +123,10 @@ export function DispatcherChart({
                     name,
                     { gross, pl, miles, productiveDays, drivers, trucks },
                 ]) => {
-                    const driverCount = drivers.size;
-                    const truckCount = trucks.size || driverCount || 1;
+                    // "Per Driver" is the consistent denominator — averaging by
+                    // truck inflates the figure when a dispatcher has more
+                    // drivers than trucks assigned (team driving, etc.).
+                    const driverCount = drivers.size || trucks.size || 1;
                     const key = name.toLowerCase().replace(/\s+/g, '_');
                     const rpm = miles > 0 ? gross / miles : 0;
                     const utilization =
@@ -143,7 +145,7 @@ export function DispatcherChart({
                         utilization,
                         drivers: driverCount,
                         trucks: trucks.size,
-                        perTruckGross: gross / truckCount / weeks,
+                        perDriverGross: gross / driverCount / weeks,
                     };
                 },
             )
@@ -151,7 +153,7 @@ export function DispatcherChart({
 
         const chartData = sorted.map((d, i) => ({
             dispatcher: d.key,
-            value: mode === 'gross' ? d.gross : d.perTruckGross,
+            value: mode === 'gross' ? d.gross : d.perDriverGross,
             fill: CHART_COLORS[i % CHART_COLORS.length],
             trucks: d.trucks,
             drivers: d.drivers,
@@ -162,7 +164,7 @@ export function DispatcherChart({
         }));
 
         const chartConfig: ChartConfig = {
-            value: { label: mode === 'gross' ? 'Gross' : 'Gross / Truck / wk' },
+            value: { label: mode === 'gross' ? 'Gross' : 'Gross / Driver / wk' },
             ...Object.fromEntries(
                 sorted.map((d, i) => [
                     d.key,
@@ -204,15 +206,15 @@ export function DispatcherChart({
                                 Gross
                             </button>
                             <button
-                                onClick={() => setMode('per_truck')}
+                                onClick={() => setMode('per_driver')}
                                 className={cn(
                                     'border-l px-3 py-1.5 transition-colors',
-                                    mode === 'per_truck'
+                                    mode === 'per_driver'
                                         ? 'bg-primary text-primary-foreground'
                                         : 'text-muted-foreground hover:bg-accent',
                                 )}
                             >
-                                Per Truck/wk
+                                Per Driver/wk
                             </button>
                         </div>
                     </div>
