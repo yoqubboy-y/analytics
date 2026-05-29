@@ -73,6 +73,12 @@ export type Row = {
     truck_number: string | null;
     type: string | null;
     days: number;
+    /**
+     * Distinct days this driver spent in a productive event status
+     * (TRANSIT / ENROUTE). Added to `days` when widgets compute per-
+     * dispatcher utilization so it matches KeyMetrics' compound rate.
+     */
+    productive_event_days?: number;
     total_gross: number;
     total_miles: number;
     rpm: number;

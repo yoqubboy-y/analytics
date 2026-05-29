@@ -49,6 +49,15 @@ class AnalyticsService
         // expenses accumulating across the window.
         $weeklyByDriver = $this->fetchWeeklyData($team, $startDate, $endDate)->groupBy('driver_id');
 
+        // Per-driver count of productive-event (TRANSIT / ENROUTE) days so
+        // the per-dispatcher widgets can fold them into their utilization
+        // calc, the same way KeyMetrics already does for the team total.
+        $productiveEventDaysByDriver = $this->fetchProductiveEventDays($team, $startDate, $endDate);
+
+        $rows->each(function (object $row) use ($productiveEventDaysByDriver) {
+            $row->productive_event_days = (int) ($productiveEventDaysByDriver[$row->driver_id] ?? 0);
+        });
+
         $windowWeeks = $this->windowWeeks($startDate, $endDate);
 
         $driverRows = $rows->map(fn (object $row) => $this->computeRow(
@@ -306,6 +315,73 @@ class AnalyticsService
     }
 
     /**
+     * Count, per driver, the distinct days in the window spent on EVENT
+     * boards whose title is "productive" (TRANSIT / ENROUTE). These add to
+     * utilization for the per-dispatcher widgets the same way they already
+     * do for the team-wide KeyMetrics number.
+     *
+     * @return array<int, int> driver_id => day count
+     */
+    private function fetchProductiveEventDays(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): array
+    {
+        // Build the IN-list dynamically from the constant so adding a new
+        // productive title doesn't require touching the SQL.
+        $titles = "'".implode("','", array_map('strtoupper', self::PRODUCTIVE_EVENT_TITLES))."'";
+
+        $sql = <<<SQL
+            WITH productive_event_boards AS (
+                SELECT
+                    gb.primary_driver_id,
+                    gb.start_date,
+                    gb.end_date
+                FROM gross_boards gb
+                WHERE gb.is_deleted = FALSE
+                  AND gb.object_type::text = 'EVENT'
+                  AND gb.company_id = :company_id
+                  AND UPPER(TRIM(gb.title)) IN ($titles)
+                  AND (
+                      (
+                          gb.start_date >= :start_date::timestamp
+                          AND gb.start_date <= :end_date::timestamp
+                          AND (gb.end_date IS NULL OR gb.end_date <= :end_date_plus_one::timestamp)
+                      )
+                      OR (
+                          gb.start_date >= :start_date_minus_seven::timestamp
+                          AND gb.start_date < :start_date::timestamp
+                          AND gb.end_date > :start_date::timestamp
+                      )
+                  )
+            ),
+            expanded AS (
+                SELECT
+                    b.primary_driver_id,
+                    day::date AS d
+                FROM productive_event_boards b
+                CROSS JOIN LATERAL generate_series(
+                    GREATEST(b.start_date, :start_date::timestamp),
+                    LEAST(COALESCE(b.end_date, :end_date::timestamp), :end_date::timestamp),
+                    '1 day'::interval
+                ) AS day
+            )
+            SELECT primary_driver_id AS driver_id, COUNT(*) AS days
+            FROM (SELECT DISTINCT primary_driver_id, d FROM expanded) x
+            GROUP BY primary_driver_id
+        SQL;
+
+        $results = DB::connection('analytics')->select($sql, [
+            'company_id' => $team->external_company_id,
+            'start_date' => $startDate->toDateString(),
+            'end_date' => $endDate->toDateString(),
+            'end_date_plus_one' => $endDate->copy()->addDay()->toDateString(),
+            'start_date_minus_seven' => $startDate->copy()->subDays(7)->toDateString(),
+        ]);
+
+        return collect($results)
+            ->mapWithKeys(fn (object $r) => [(int) $r->driver_id => (int) $r->days])
+            ->all();
+    }
+
+    /**
      * Compute the P&L row for a single driver.
      *
      * @param  Collection<int|string, DriverConfig>  $driverConfigs
@@ -335,6 +411,7 @@ class AnalyticsService
                 'truck_number' => $row->truck_number,
                 'type' => $driverConfig?->contract_type->label(),
                 'days' => (int) $row->days,
+                'productive_event_days' => (int) ($row->productive_event_days ?? 0),
                 'total_gross' => $gross,
                 'total_miles' => $miles,
                 'rpm' => $rpm,
@@ -363,6 +440,7 @@ class AnalyticsService
             'truck_number' => $row->truck_number,
             'type' => $driverConfig->contract_type->label(),
             'days' => (int) $row->days,
+            'productive_event_days' => (int) ($row->productive_event_days ?? 0),
             'total_gross' => $gross,
             'total_miles' => $miles,
             'rpm' => $rpm,
@@ -758,6 +836,17 @@ class AnalyticsService
                 ->unique()
                 ->count();
 
+            // Distinct workdates spent in a "productive event" status
+            // (TRANSIT / ENROUTE). These add to utilization in the
+            // per-dispatcher widgets, the same as KeyMetrics.
+            $productiveEventDays = $group
+                ->filter(fn ($r) => (float) $r->gross <= 0
+                    && in_array(strtoupper(trim((string) ($r->status ?? ''))), self::PRODUCTIVE_EVENT_TITLES, true))
+                ->pluck('work_date')
+                ->map(fn ($d) => (string) $d)
+                ->unique()
+                ->count();
+
             $rpm = $miles > 0 ? round($gross / $miles, 2) : 0.0;
             $driverConfig = $driverConfigs->get($driverKey);
 
@@ -785,6 +874,7 @@ class AnalyticsService
                     'truck_number' => $first->truck_number,
                     'type' => $driverConfig?->contract_type->label(),
                     'days' => $days,
+                    'productive_event_days' => $productiveEventDays,
                     'total_gross' => round($gross, 2),
                     'total_miles' => round($miles, 2),
                     'rpm' => $rpm,
@@ -809,6 +899,7 @@ class AnalyticsService
                 'truck_number' => $first->truck_number,
                 'type' => $driverConfig->contract_type->label(),
                 'days' => $days,
+                'productive_event_days' => $productiveEventDays,
                 'total_gross' => round($gross, 2),
                 'total_miles' => round($miles, 2),
                 'rpm' => $rpm,

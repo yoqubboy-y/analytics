@@ -84,11 +84,16 @@ export function DispatcherRankings({
 
             // Rows with positive gross have row.days populated from LOAD/DRAFT
             // boards (productive). Zero-gross rows are event-only drivers whose
-            // days come from EVENT boards.
+            // days come from EVENT boards. TRANSIT / ENROUTE event days are
+            // surfaced separately by the backend so they always count as
+            // productive — see Row.productive_event_days.
+            const productiveEventDays = row.productive_event_days ?? 0;
+
             if (row.total_gross > 0) {
-                entry.productiveDays += row.days;
+                entry.productiveDays += row.days + productiveEventDays;
             } else {
-                entry.eventDays += row.days;
+                entry.productiveDays += productiveEventDays;
+                entry.eventDays += Math.max(0, row.days - productiveEventDays);
             }
 
             if (row.truck_number) {

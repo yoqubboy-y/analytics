@@ -104,9 +104,13 @@ export function DispatcherChart({
             entry.pl += row.profit_loss ?? 0;
             entry.miles += row.total_miles;
 
+            // Productive driver-days: LOAD/DRAFT days (when gross > 0) plus
+            // any TRANSIT / ENROUTE days the backend tracks separately —
+            // keeps utilization aligned with KeyMetrics' compound rate.
             if (row.total_gross > 0) {
                 entry.productiveDays += row.days;
             }
+            entry.productiveDays += row.productive_event_days ?? 0;
 
             if (row.driver_id != null) {
                 entry.drivers.add(row.driver_id);
