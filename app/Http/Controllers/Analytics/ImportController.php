@@ -55,16 +55,18 @@ class ImportController extends Controller
 
         $totalRows = collect($data['sheets'])->sum(fn (array $s) => count($s['rows']));
 
-        // Stage the parsed payload on the local disk; the worker reads it
-        // back when the queued job runs. A random filename avoids races
-        // between concurrent uploads.
+        // Stage the parsed payload on the configured imports disk so the
+        // worker can read it back. `local` works for single-host dev;
+        // multi-container deploys (Railway, ECS) need a shared disk such
+        // as `s3` — see config/filesystems.php and `IMPORTS_DISK` env.
+        $disk = config('filesystems.imports_disk', 'local');
         $payloadPath = sprintf(
             'imports/team-%d/%s-%s.json',
             $currentTeam->id,
             now()->format('Ymd-His'),
             Str::random(8),
         );
-        Storage::disk('local')->put($payloadPath, json_encode($data, JSON_THROW_ON_ERROR));
+        Storage::disk($disk)->put($payloadPath, json_encode($data, JSON_THROW_ON_ERROR));
 
         $import = XlsxImport::query()->create([
             'team_id' => $currentTeam->id,

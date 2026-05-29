@@ -46,8 +46,14 @@ class ProcessXlsxImport implements ShouldQueue
             return;
         }
 
-        if (! $import->payload_path || ! Storage::disk('local')->exists($import->payload_path)) {
-            $this->markFailed($import, 'Staged payload was not found on disk.');
+        // Read the parsed payload from whichever disk the controller staged
+        // it on. Single-host dev uses `local`; multi-container deploys
+        // (Railway, ECS, etc.) need a shared disk such as `s3` — see the
+        // `imports_disk` key in config/filesystems.php.
+        $disk = config('filesystems.imports_disk', 'local');
+
+        if (! $import->payload_path || ! Storage::disk($disk)->exists($import->payload_path)) {
+            $this->markFailed($import, "Staged payload was not found on disk [{$disk}]: {$import->payload_path}");
 
             return;
         }
@@ -59,7 +65,7 @@ class ProcessXlsxImport implements ShouldQueue
         ]);
 
         try {
-            $raw = Storage::disk('local')->get($import->payload_path);
+            $raw = Storage::disk($disk)->get($import->payload_path);
             /** @var array{
              *     source_format: string,
              *     source_filename: ?string,
@@ -118,7 +124,7 @@ class ProcessXlsxImport implements ShouldQueue
                 'total_rows' => $totalRows,
             ]);
 
-            Storage::disk('local')->delete($import->payload_path);
+            Storage::disk($disk)->delete($import->payload_path);
             $import->update(['payload_path' => null]);
         } catch (Throwable $e) {
             $this->markFailed($import, $e->getMessage());

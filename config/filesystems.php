@@ -17,6 +17,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | XLSX Import Staging Disk
+    |--------------------------------------------------------------------------
+    |
+    | Disk used by `ImportController` to stage the parsed XLSX payload that
+    | the `ProcessXlsxImport` worker picks up. In single-host dev `local`
+    | is fine; on multi-container deploys (Railway, etc.) the web pod and
+    | the worker pod don't share storage, so set this to `s3` and provide
+    | the AWS_* env vars.
+    |
+    */
+
+    'imports_disk' => env('IMPORTS_DISK', 'local'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Filesystem Disks
     |--------------------------------------------------------------------------
     |
