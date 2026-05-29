@@ -105,6 +105,7 @@ type TeamExpense = {
     current_rate: number | null;
     rates: ExpenseRate[];
     applies_to: string[] | null;
+    driver_paid_contract_types: string[] | null;
     skip_when_no_gross: boolean;
     sort_order: number;
 };
@@ -185,6 +186,7 @@ const emptyExpense = {
     rate: '',
     effective_from: isoMonday(),
     applies_to: [] as string[],
+    driver_paid_contract_types: [] as string[],
     skip_when_no_gross: false,
     sort_order: 0,
 };
@@ -319,6 +321,10 @@ export default function Configuration({
                     newExpense.applies_to.length > 0
                         ? newExpense.applies_to
                         : null,
+                driver_paid_contract_types:
+                    newExpense.driver_paid_contract_types.length > 0
+                        ? newExpense.driver_paid_contract_types
+                        : null,
                 skip_when_no_gross: newExpense.skip_when_no_gross,
             },
             {
@@ -348,6 +354,11 @@ export default function Configuration({
                     editingExpense.applies_to &&
                     editingExpense.applies_to.length > 0
                         ? editingExpense.applies_to
+                        : null,
+                driver_paid_contract_types:
+                    editingExpense.driver_paid_contract_types &&
+                    editingExpense.driver_paid_contract_types.length > 0
+                        ? editingExpense.driver_paid_contract_types
                         : null,
                 skip_when_no_gross: editingExpense.skip_when_no_gross,
                 sort_order: editingExpense.sort_order,
@@ -1121,6 +1132,40 @@ export default function Configuration({
                                                     ))}
                                                 </ToggleGroup>
                                             </div>
+                                            <div className="flex flex-col gap-1 sm:col-span-2">
+                                                <Label>
+                                                    Driver covers{' '}
+                                                    <span className="font-normal text-muted-foreground">
+                                                        (income for carrier — flips to negative on those rows)
+                                                    </span>
+                                                </Label>
+                                                <ToggleGroup
+                                                    type="multiple"
+                                                    variant="outline"
+                                                    className="justify-start"
+                                                    value={
+                                                        newExpense.driver_paid_contract_types
+                                                    }
+                                                    onValueChange={(v) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            driver_paid_contract_types: v,
+                                                        })
+                                                    }
+                                                >
+                                                    {contractTypes.map((ct) => (
+                                                        <ToggleGroupItem
+                                                            key={ct.value}
+                                                            value={ct.value}
+                                                        >
+                                                            {ct.label}
+                                                        </ToggleGroupItem>
+                                                    ))}
+                                                </ToggleGroup>
+                                                <p className="text-xs text-muted-foreground">
+                                                    For these contract types the driver pays this out of their salary share, so the carrier collects it as income instead of paying it.
+                                                </p>
+                                            </div>
                                             <div className="sm:col-span-2">
                                                 <SkipNoGrossCheckbox
                                                     checked={
@@ -1306,6 +1351,43 @@ export default function Configuration({
                                                                         ? 'All contract types'
                                                                         : 'Selected only'}
                                                                 </span>
+                                                                <span className="mt-2 text-xs text-muted-foreground">
+                                                                    Driver covers
+                                                                </span>
+                                                                <ToggleGroup
+                                                                    type="multiple"
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    value={
+                                                                        editingExpense.driver_paid_contract_types ??
+                                                                        []
+                                                                    }
+                                                                    onValueChange={(
+                                                                        v,
+                                                                    ) =>
+                                                                        setEditingExpense(
+                                                                            {
+                                                                                ...editingExpense,
+                                                                                driver_paid_contract_types:
+                                                                                    v.length >
+                                                                                    0
+                                                                                        ? v
+                                                                                        : null,
+                                                                            },
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    {contractTypes.map(
+                                                                        (ct) => (
+                                                                            <ToggleGroupItem
+                                                                                key={ct.value}
+                                                                                value={ct.value}
+                                                                            >
+                                                                                {ct.label}
+                                                                            </ToggleGroupItem>
+                                                                        ),
+                                                                    )}
+                                                                </ToggleGroup>
                                                                 <label className="mt-1 flex cursor-pointer items-start gap-2 text-xs font-normal">
                                                                     <Checkbox
                                                                         checked={
@@ -1370,6 +1452,22 @@ export default function Configuration({
                                                                         gross
                                                                     </span>
                                                                 )}
+                                                                {exp.driver_paid_contract_types &&
+                                                                    exp
+                                                                        .driver_paid_contract_types
+                                                                        .length >
+                                                                        0 && (
+                                                                        <span className="text-xs text-sky-600 dark:text-sky-400">
+                                                                            Driver covers ({exp.driver_paid_contract_types
+                                                                                .map(
+                                                                                    (v) =>
+                                                                                        contractTypes.find(
+                                                                                            (ct) => ct.value === v,
+                                                                                        )?.label ?? v,
+                                                                                )
+                                                                                .join(', ')})
+                                                                        </span>
+                                                                    )}
                                                             </span>
                                                         )}
                                                     </TableCell>

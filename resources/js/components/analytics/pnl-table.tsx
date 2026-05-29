@@ -96,10 +96,16 @@ export type Expense = {
     calculation_type: string;
 };
 
-const fmt = (n: number | null, prefix = '') =>
-    n == null
-        ? '—'
-        : `${prefix}${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Negative values get the sign outside the prefix so a driver-paid expense
+// reads "-$250.00" instead of "$-250.00".
+const fmt = (n: number | null, prefix = '') => {
+    if (n == null) return '—';
+    const abs = Math.abs(n).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+    return n < 0 ? `-${prefix}${abs}` : `${prefix}${abs}`;
+};
 
 const fmtInt = (n: number) => n.toLocaleString('en-US');
 

@@ -539,7 +539,13 @@ class AnalyticsService
             }
 
             if ($charged) {
-                $computedExpenses[$expense->name] = round($amount, 2);
+                // When the driver covers this expense from their salary share
+                // it's income for the carrier — store the cell negative so
+                // `Gross − Total Exp. = P&L` keeps holding without branching.
+                $signedAmount = $expense->isDriverPaidFor($contractType)
+                    ? -$amount
+                    : $amount;
+                $computedExpenses[$expense->name] = round($signedAmount, 2);
             }
         }
 

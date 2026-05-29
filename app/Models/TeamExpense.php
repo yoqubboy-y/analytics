@@ -18,6 +18,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'description',
     'calculation_type',
     'applies_to',
+    'driver_paid_contract_types',
     'skip_when_no_gross',
     'sort_order',
 ])]
@@ -36,6 +37,7 @@ class TeamExpense extends Model
         return [
             'calculation_type' => ExpenseCalculationType::class,
             'applies_to' => 'array', // array<string> of DriverContractType values, or null for all
+            'driver_paid_contract_types' => 'array', // contract types where driver covers (expense becomes carrier income)
             'skip_when_no_gross' => 'boolean',
             'sort_order' => 'integer',
         ];
@@ -121,6 +123,21 @@ class TeamExpense extends Model
         }
 
         return $this->appliesToContractType($type);
+    }
+
+    /**
+     * Determine whether the driver pays this expense out of their own salary
+     * share (carrier passes it through and collects it as income). When true,
+     * the computed amount is rendered negative so `Gross − Total Exp. = P&L`
+     * naturally treats it as income for the carrier.
+     */
+    public function isDriverPaidFor(DriverContractType $type): bool
+    {
+        if ($this->driver_paid_contract_types === null) {
+            return false;
+        }
+
+        return in_array($type->value, $this->driver_paid_contract_types, strict: true);
     }
 
     /**

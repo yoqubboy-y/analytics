@@ -103,6 +103,7 @@ class ConfigurationController extends Controller
                             'effective_to' => $r->effective_to?->toDateString(),
                         ])->all(),
                     'applies_to' => $e->applies_to,
+                    'driver_paid_contract_types' => $e->driver_paid_contract_types,
                     'skip_when_no_gross' => $e->skip_when_no_gross,
                     'sort_order' => $e->sort_order,
                 ])->values(),
@@ -245,6 +246,8 @@ class ConfigurationController extends Controller
             'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
             'applies_to' => ['nullable', 'array'],
             'applies_to.*' => [Rule::enum(DriverContractType::class)],
+            'driver_paid_contract_types' => ['nullable', 'array'],
+            'driver_paid_contract_types.*' => [Rule::enum(DriverContractType::class)],
             'skip_when_no_gross' => ['boolean'],
             'sort_order' => ['integer', 'min:0'],
         ]);
@@ -254,6 +257,7 @@ class ConfigurationController extends Controller
             'description' => $data['description'] ?? null,
             'calculation_type' => $data['calculation_type'],
             'applies_to' => $data['applies_to'] ?? null,
+            'driver_paid_contract_types' => $data['driver_paid_contract_types'] ?? null,
             'skip_when_no_gross' => $data['skip_when_no_gross'] ?? false,
             'sort_order' => $data['sort_order'] ?? 0,
         ]);
@@ -277,6 +281,8 @@ class ConfigurationController extends Controller
             'calculation_type' => ['required', Rule::enum(ExpenseCalculationType::class)],
             'applies_to' => ['nullable', 'array'],
             'applies_to.*' => [Rule::enum(DriverContractType::class)],
+            'driver_paid_contract_types' => ['nullable', 'array'],
+            'driver_paid_contract_types.*' => [Rule::enum(DriverContractType::class)],
             'skip_when_no_gross' => ['boolean'],
             'sort_order' => ['integer', 'min:0'],
         ]);
