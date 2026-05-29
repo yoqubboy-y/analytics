@@ -101,9 +101,22 @@ class TeamExpense extends Model
 
     /**
      * Determine whether this expense applies to the given contract type.
+     *
+     * `driver_paid_contract_types` implies application: if the driver covers
+     * this expense for their contract type, the expense by definition exists
+     * for them — it just renders as income (a negative cell) instead of a
+     * carrier cost. Otherwise we fall back to the `applies_to` list (null
+     * means "all contract types").
      */
     public function appliesToContractType(DriverContractType $type): bool
     {
+        if (
+            $this->driver_paid_contract_types !== null
+            && in_array($type->value, $this->driver_paid_contract_types, strict: true)
+        ) {
+            return true;
+        }
+
         if ($this->applies_to === null) {
             return true;
         }
