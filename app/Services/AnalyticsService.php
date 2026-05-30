@@ -490,6 +490,11 @@ class AnalyticsService
 
         /** @var array<string, float> $computedExpenses */
         $computedExpenses = [];
+        // Only the carrier-paid portion of each expense reduces the carrier
+        // P&L. Driver-paid (`isDriverPaidFor`) amounts are pass-through
+        // recoveries and stay out of `total_expenses` even though they're
+        // still rendered as -$X cells for the driver's settlement view.
+        $totalCarrierCost = 0.0;
 
         foreach ($expenses as $expense) {
             if (! $expense->appliesToContractType($contractType)) {
@@ -539,20 +544,29 @@ class AnalyticsService
             }
 
             if ($charged) {
-                // When the driver covers this expense from their salary share
-                // it's income for the carrier — store the cell negative so
-                // `Gross − Total Exp. = P&L` keeps holding without branching.
-                $signedAmount = $expense->isDriverPaidFor($contractType)
-                    ? -$amount
-                    : $amount;
-                $computedExpenses[$expense->name] = round($signedAmount, 2);
+                $isDriverPaid = $expense->isDriverPaidFor($contractType);
+
+                // The cell is displayed as -$X when the driver covers, so
+                // settlement deductions stay visible on the row. But the
+                // expense is a pass-through (carrier paid the vendor, driver
+                // reimbursed via salary), so it's cost-neutral to the carrier
+                // and must NOT count toward `total_expenses` — otherwise the
+                // reimbursement is treated as new profit.
+                $computedExpenses[$expense->name] = round(
+                    $isDriverPaid ? -$amount : $amount,
+                    2,
+                );
+
+                if (! $isDriverPaid) {
+                    $totalCarrierCost += $amount;
+                }
             }
         }
 
         return [
             'salary' => $salary,
             'expenses' => $computedExpenses,
-            'total_expenses' => round(array_sum($computedExpenses), 2),
+            'total_expenses' => round($totalCarrierCost, 2),
         ];
     }
 
@@ -622,9 +636,10 @@ class AnalyticsService
             'rpm' => $totalMiles > 0 ? round($totalGross / $totalMiles, 2) : 0.0,
             'salary' => $totalSalary,
             'expenses' => $expenseTotals,
-            // Matches per-row semantics: Total Exp. includes salary so the
-            // TOTAL row visibly satisfies `Gross − Total Exp. = P&L`.
-            'total_expenses' => round(array_sum($expenseTotals) + $totalSalary, 2),
+            // Sum per-row carrier-net Total Exp. so driver-paid pass-throughs
+            // stay out of the math (they're cost-neutral). Identity
+            // `Gross − Total Exp. = P&L` continues to hold on the TOTAL row.
+            'total_expenses' => round((float) $configured->sum('total_expenses'), 2),
             'profit_loss' => $configured->sum('profit_loss'),
             'missing_config' => false,
             'is_total' => true,
@@ -970,8 +985,10 @@ class AnalyticsService
             'rpm' => $totalMiles > 0 ? round($totalGross / $totalMiles, 2) : 0.0,
             'salary' => $hasFinancials ? $totalSalary : null,
             'expenses' => $expenseTotals,
-            // Mirrors per-row semantics: Total Exp. includes salary.
-            'total_expenses' => $hasFinancials ? round(array_sum($expenseTotals) + $totalSalary, 2) : null,
+            // Sum per-row carrier-net Total Exp. so driver-paid pass-throughs
+            // stay out of the math (they're cost-neutral). Identity
+            // `Gross − Total Exp. = P&L` continues to hold on the TOTAL row.
+            'total_expenses' => $hasFinancials ? round((float) $configured->sum('total_expenses'), 2) : null,
             'profit_loss' => $hasFinancials ? $configured->sum('profit_loss') : null,
             'missing_config' => false,
             'is_total' => true,

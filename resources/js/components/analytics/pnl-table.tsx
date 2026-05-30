@@ -338,12 +338,13 @@ export function PnlTable({
             rpm: totalMiles > 0 ? totalGross / totalMiles : 0,
             salary: totalSalary,
             expenses: expenseSums,
-            // Total Exp. now folds salary in so the TOTAL row visibly
-            // balances `Gross − Total Exp. = P&L`, matching per-row
-            // semantics from the backend.
-            total_expenses:
-                Object.values(expenseSums).reduce((s, v) => s + v, 0) +
-                totalSalary,
+            // Sum per-row carrier-net Total Exp. directly so driver-paid
+            // pass-throughs (which still appear as -$X cells on each row)
+            // stay out of the math — they're cost-neutral to the carrier.
+            total_expenses: configured.reduce(
+                (s, r) => s + (r.total_expenses ?? 0),
+                0,
+            ),
             profit_loss: configured.reduce(
                 (s, r) => s + (r.profit_loss ?? 0),
                 0,
