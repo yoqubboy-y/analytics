@@ -49,6 +49,14 @@ class AnalyticsService
         // expenses accumulating across the window.
         $weeklyByDriver = $this->fetchWeeklyData($team, $startDate, $endDate)->groupBy('driver_id');
 
+        // Per-driver set of ISO weeks the driver was active (had any LOAD /
+        // DRAFT / EVENT board assigned to that week). Flat expenses are only
+        // charged for these weeks — otherwise a multi-week window bills every
+        // flat expense once per calendar week even for weeks the driver never
+        // worked. This is our employment-active proxy in the absence of
+        // contract_start_date / contract_end_date in this DB version.
+        $activeWeeksByDriver = $this->fetchActiveWeeks($team, $startDate, $endDate);
+
         // Per-driver count of productive-event (TRANSIT / ENROUTE) days so
         // the per-dispatcher widgets can fold them into their utilization
         // calc, the same way KeyMetrics already does for the team total.
@@ -66,6 +74,7 @@ class AnalyticsService
             $expenses,
             $weeklyByDriver->get($row->driver_id, collect()),
             $windowWeeks,
+            $activeWeeksByDriver[$row->driver_id] ?? [],
         ));
 
         $totals = $this->computeTotals($driverRows, $expenses);
@@ -263,8 +272,11 @@ class AnalyticsService
     /**
      * Fetch per-(driver, week) gross & miles from the analytics database.
      *
-     * Buckets each board into the ISO week (Monday) of its start date; summed
-     * across weeks this equals the per-driver totals from fetchRawData.
+     * Buckets each board into its *assigned* ISO week, mirroring prod's
+     * `belongs_to_week_range`: a board belongs to the Monday-week of its start
+     * date, unless it ends after the following Monday, in which case it is
+     * bumped one week forward (it "ran past the cutoff"). Summed across weeks
+     * this equals the per-driver totals from fetchRawData.
      *
      * @return Collection<int, object>
      */
@@ -276,7 +288,12 @@ class AnalyticsService
                     gb.primary_driver_id,
                     gb.rate,
                     gb.miles,
-                    gb.start_date
+                    CASE
+                        WHEN gb.end_date IS NULL
+                          OR gb.end_date::date <= (date_trunc('week', gb.start_date)::date + 7)
+                        THEN date_trunc('week', gb.start_date)::date
+                        ELSE date_trunc('week', gb.start_date)::date + 7
+                    END AS week_start
                 FROM gross_boards gb
                 WHERE gb.is_deleted = FALSE
                   AND gb.object_type IN ('LOAD', 'DRAFT')
@@ -296,11 +313,11 @@ class AnalyticsService
             )
             SELECT
                 wb.primary_driver_id AS driver_id,
-                date_trunc('week', wb.start_date)::date AS week_start,
+                wb.week_start,
                 ROUND(SUM(wb.rate)::numeric, 2) AS week_gross,
                 ROUND(SUM(wb.miles)::numeric, 2) AS week_miles
             FROM week_boards wb
-            GROUP BY wb.primary_driver_id, date_trunc('week', wb.start_date)
+            GROUP BY wb.primary_driver_id, wb.week_start
         SQL;
 
         $results = DB::connection('analytics')->select($sql, [
@@ -312,6 +329,68 @@ class AnalyticsService
         ]);
 
         return collect($results);
+    }
+
+    /**
+     * Per driver, the set of ISO weeks (Monday date strings) in which the
+     * driver had ANY board — LOAD, DRAFT or EVENT — assigned to that week.
+     * Week assignment uses the same `belongs_to_week_range` rule as
+     * fetchWeeklyData so a board's active week matches the week its gross
+     * lands in.
+     *
+     * Used to gate flat (weekly) expenses: a driver is only charged a flat
+     * expense for weeks they were actually active, so widening the report
+     * window no longer bills idle weeks.
+     *
+     * @return array<int, array<int, string>> driver_id => list of week-start dates
+     */
+    private function fetchActiveWeeks(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): array
+    {
+        $sql = <<<'SQL'
+            WITH boards AS (
+                SELECT
+                    gb.primary_driver_id,
+                    CASE
+                        WHEN gb.end_date IS NULL
+                          OR gb.end_date::date <= (date_trunc('week', gb.start_date)::date + 7)
+                        THEN date_trunc('week', gb.start_date)::date
+                        ELSE date_trunc('week', gb.start_date)::date + 7
+                    END AS week_start
+                FROM gross_boards gb
+                WHERE gb.is_deleted = FALSE
+                  AND gb.object_type::text IN ('LOAD', 'DRAFT', 'EVENT')
+                  AND gb.company_id = :company_id
+                  AND (
+                      (
+                          gb.start_date >= :start_date
+                          AND gb.start_date <= :end_date
+                          AND (gb.end_date IS NULL OR gb.end_date <= :end_date_plus_one)
+                      )
+                      OR (
+                          gb.start_date >= :start_date_minus_seven
+                          AND gb.start_date < :start_date
+                          AND gb.end_date > :start_date
+                      )
+                  )
+            )
+            SELECT DISTINCT primary_driver_id AS driver_id, week_start
+            FROM boards
+        SQL;
+
+        $results = DB::connection('analytics')->select($sql, [
+            'company_id' => $team->external_company_id,
+            'start_date' => $startDate->toDateString(),
+            'end_date' => $endDate->toDateString(),
+            'end_date_plus_one' => $endDate->copy()->addDay()->toDateString(),
+            'start_date_minus_seven' => $startDate->copy()->subDays(7)->toDateString(),
+        ]);
+
+        return collect($results)
+            ->groupBy('driver_id')
+            ->map(fn (Collection $weeks) => $weeks
+                ->map(fn (object $r) => (string) $r->week_start)
+                ->all())
+            ->all();
     }
 
     /**
@@ -388,9 +467,10 @@ class AnalyticsService
      * @param  Collection<int, TeamExpense>  $expenses
      * @param  Collection<int, object>  $weeklyBuckets  per-week gross/miles for this driver
      * @param  array<int, CarbonImmutable>  $windowWeeks  Monday of each ISO week in the window
+     * @param  array<int, string>  $activeWeeks  week-start dates this driver was active
      * @return array<string, mixed>
      */
-    private function computeRow(object $row, Collection $driverConfigs, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks): array
+    private function computeRow(object $row, Collection $driverConfigs, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks, array $activeWeeks): array
     {
         $driverConfig = $driverConfigs->get($row->driver_id);
 
@@ -424,7 +504,7 @@ class AnalyticsService
             ];
         }
 
-        $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks);
+        $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks, $activeWeeks);
 
         $profitLoss = round($gross - $financials['salary'] - $financials['total_expenses'], 2);
 
@@ -458,16 +538,22 @@ class AnalyticsService
      *
      * Salary and variable expenses (per-mile, % of gross) are computed on each
      * data week's gross/miles using that week's rate. Flat expenses are weekly
-     * charges accrued once per ISO week in the window, so they scale with the
-     * period. `skip_when_no_gross` is evaluated per week, matching its intent.
+     * charges accrued once per ISO week the driver was *active* (in
+     * `$activeWeeks`), so they scale with how long the driver worked rather
+     * than with the raw window length. `skip_when_no_gross` is evaluated per
+     * week, matching its intent.
      *
      * @param  Collection<int, TeamExpense>  $expenses
      * @param  Collection<int, object>  $weeklyBuckets  per-week gross/miles for this driver
      * @param  array<int, CarbonImmutable>  $windowWeeks  Monday of each ISO week in the window
+     * @param  array<int, string>  $activeWeeks  week-start dates this driver had any board
      * @return array{salary: float, expenses: array<string, float>, total_expenses: float}
      */
-    public function computeFinancials(DriverConfig $driverConfig, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks): array
+    public function computeFinancials(DriverConfig $driverConfig, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks, array $activeWeeks): array
     {
+        // Fast lookup for "was the driver active this week?" flat-expense gating.
+        $activeWeekSet = array_flip($activeWeeks);
+
         $contractType = $driverConfig->contract_type;
 
         // Index this driver's weekly gross by ISO-week Monday for flat gating.
@@ -505,9 +591,18 @@ class AnalyticsService
             $charged = false;
 
             if ($expense->calculation_type === ExpenseCalculationType::Flat) {
-                // Flat is a weekly charge: accrue once per ISO week in the window.
+                // Flat is a weekly charge: accrue once per ISO week the driver
+                // was active. Weeks with no board activity are skipped so a
+                // wider window doesn't bill idle weeks (a driver who only ran
+                // one week is charged one week of flat, not the whole span).
                 foreach ($windowWeeks as $weekStart) {
-                    $weekGross = $grossByWeek[$weekStart->toDateString()] ?? 0.0;
+                    $weekKey = $weekStart->toDateString();
+
+                    if (! isset($activeWeekSet[$weekKey])) {
+                        continue;
+                    }
+
+                    $weekGross = $grossByWeek[$weekKey] ?? 0.0;
 
                     if ($expense->skip_when_no_gross && $weekGross <= 0) {
                         continue;
@@ -908,7 +1003,12 @@ class AnalyticsService
                 ];
             }
 
-            $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks);
+            // Active weeks = every ISO week the driver has an imported row
+            // (gross or status), so flat expenses are gated to weeks the driver
+            // actually appears in the sheet — same rule as the analytics-DB path.
+            $activeWeeks = $weeklyBuckets->pluck('week_start')->all();
+
+            $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks, $activeWeeks);
             $profitLoss = round($gross - $financials['salary'] - $financials['total_expenses'], 2);
             $totalExpensesWithSalary = round($financials['total_expenses'] + $financials['salary'], 2);
 
