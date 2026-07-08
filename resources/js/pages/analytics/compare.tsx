@@ -21,6 +21,8 @@ type TeamPayload = {
     name: string;
     dataSource: 'analytics_db' | 'xlsx';
     rows: Row[];
+    /** Per-(driver, dispatcher) rows for the dispatcher widgets — see analytics/index. */
+    dispatcherRows: Row[];
     keyMetrics: KeyMetricsData;
     expenses: Expense[];
     canManage: boolean;
@@ -210,13 +212,13 @@ function TeamColumn({
                     canDownload={false}
                 />
                 <DispatcherChart
-                    rows={team.rows}
+                    rows={team.dispatcherRows}
                     startDate={startDate}
                     endDate={endDate}
                     canDownload={false}
                 />
                 <DispatcherRankings
-                    rows={team.rows}
+                    rows={team.dispatcherRows}
                     weeks={weeks}
                     canDownload={false}
                 />

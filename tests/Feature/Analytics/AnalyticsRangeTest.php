@@ -8,6 +8,7 @@ beforeEach(function () {
     // Stub the service so the route never touches the external analytics DB.
     $this->mock(AnalyticsService::class, function ($mock) {
         $mock->shouldReceive('weeklyReport')->andReturn(collect([]));
+        $mock->shouldReceive('splitByDispatcher')->andReturn(collect([]));
         $mock->shouldReceive('weeklyKeyMetrics')->andReturn([
             'drivers' => ['total' => 0],
             'compound_utilization_rate' => 0.0,

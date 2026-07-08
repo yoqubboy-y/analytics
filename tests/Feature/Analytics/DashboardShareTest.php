@@ -117,6 +117,7 @@ test('a team cannot revoke another team share', function () {
 test('the public share page renders for an active link', function () {
     $this->mock(AnalyticsService::class, function ($mock) {
         $mock->shouldReceive('weeklyReport')->andReturn(collect([]));
+        $mock->shouldReceive('splitByDispatcher')->andReturn(collect([]));
         $mock->shouldReceive('weeklyKeyMetrics')->andReturn([
             'drivers' => ['total' => 0],
             'compound_utilization_rate' => 0.0,
@@ -139,6 +140,7 @@ test('the public share page renders for an active link', function () {
 test('the public share page receives its widget scope', function () {
     $this->mock(AnalyticsService::class, function ($mock) {
         $mock->shouldReceive('weeklyReport')->andReturn(collect([]));
+        $mock->shouldReceive('splitByDispatcher')->andReturn(collect([]));
         $mock->shouldReceive('weeklyKeyMetrics')->andReturn([
             'drivers' => ['total' => 0],
             'compound_utilization_rate' => 0.0,

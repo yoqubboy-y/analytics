@@ -83,6 +83,284 @@ class AnalyticsService
     }
 
     /**
+     * Per-dispatcher rows for the Dispatcher Rankings / Chart widgets.
+     *
+     * The per-driver P&L rows attribute a driver's whole-window gross to a
+     * single "mode" dispatcher. That is fine for a one-week view (a driver
+     * rarely changes dispatcher inside a week) but misallocates over longer
+     * ranges: a driver who moved from dispatcher A to B mid-month has ALL
+     * their gross credited to whichever ran more loads. This splits each such
+     * driver per (driver, ISO-week) to that week's dispatcher, so gross, miles
+     * and net all land on the dispatcher who actually ran the week. Drivers
+     * with a single dispatcher pass through unchanged.
+     *
+     * @return Collection<int, array<string, mixed>>
+     */
+    public function dispatcherRows(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): Collection
+    {
+        return $this->splitByDispatcher($team, $this->weeklyReport($team, $startDate, $endDate), $startDate, $endDate);
+    }
+
+    /**
+     * Split already-computed per-driver P&L rows into per-(driver, dispatcher)
+     * rows using each ISO week's actual dispatcher. The TOTAL row is dropped
+     * (rankings ignore it); `missing_config` rows pass through untouched.
+     *
+     * @param  Collection<int, array<string, mixed>>  $rows
+     * @return Collection<int, array<string, mixed>>
+     */
+    public function splitByDispatcher(Team $team, Collection $rows, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): Collection
+    {
+        // XLSX-backed teams identify one dispatcher per driver (from config or
+        // the sheet), so there is nothing to split — just drop the TOTAL row.
+        if ($team->data_source === TeamDataSource::Xlsx) {
+            return $rows->reject(fn (array $r) => $r['is_total'])->values();
+        }
+
+        /** @var Collection<int, Collection<int, object>> $weeklyByDriver */
+        $weeklyByDriver = $this->fetchWeeklyDispatcher($team, $startDate, $endDate)->groupBy('driver_id');
+
+        /** @var Collection<int, TeamExpense> $expenses */
+        $expenses = $team->expenses->load('rates');
+
+        /** @var Collection<int|string, DriverConfig> $driverConfigs */
+        $driverConfigs = $team->driverConfigs->load('rates')->keyBy('external_driver_id');
+
+        $activeWeeksByDriver = $this->fetchActiveWeeks($team, $startDate, $endDate);
+
+        $out = collect();
+
+        foreach ($rows as $row) {
+            if ($row['is_total']) {
+                continue;
+            }
+
+            /** @var Collection<int, object> $buckets */
+            $buckets = $weeklyByDriver->get($row['driver_id'], collect());
+            $distinctDispatchers = $buckets->pluck('dispatcher')->map(fn ($d) => (string) $d)->unique();
+
+            // Single-dispatcher (or event-only / missing-config) drivers keep
+            // their existing row verbatim.
+            if ($row['missing_config'] || $buckets->isEmpty() || $distinctDispatchers->count() <= 1) {
+                $out->push($row);
+
+                continue;
+            }
+
+            $config = $driverConfigs->get($row['driver_id']);
+
+            if (! $config) {
+                $out->push($row);
+
+                continue;
+            }
+
+            foreach ($this->splitConfiguredRow($row, $buckets, $config, $expenses, $activeWeeksByDriver[$row['driver_id']] ?? []) as $splitRow) {
+                $out->push($splitRow);
+            }
+        }
+
+        return $out->values();
+    }
+
+    /**
+     * Split one configured driver's row across the dispatchers who ran them,
+     * week by week. Gross/miles/salary/expenses are partitioned by ISO week
+     * (each week belongs to exactly one dispatcher), so the per-dispatcher
+     * pieces sum back to the driver's original totals. Day counts (used only
+     * for utilization) are split proportionally by each dispatcher's share of
+     * the driver's gross weeks.
+     *
+     * @param  array<string, mixed>  $row
+     * @param  Collection<int, object>  $buckets  per-week gross/miles/dispatcher for this driver
+     * @param  Collection<int, TeamExpense>  $expenses
+     * @param  array<int, string>  $activeWeeks  week-start dates this driver had any board
+     * @return array<int, array<string, mixed>>
+     */
+    public function splitConfiguredRow(array $row, Collection $buckets, DriverConfig $config, Collection $expenses, array $activeWeeks): array
+    {
+        /** @var Collection<string, Collection<int, object>> $byDispatcher */
+        $byDispatcher = $buckets->groupBy(fn (object $b) => (string) $b->dispatcher);
+
+        // Primary dispatcher = the one who ran the most of this driver's gross.
+        // Event-only active weeks (no gross bucket) are billed to them so flat
+        // expenses stay accounted for and the pieces still sum to the total.
+        $primary = $byDispatcher
+            ->map(fn (Collection $group) => (float) $group->sum('week_gross'))
+            ->sortDesc()
+            ->keys()
+            ->first();
+
+        // Which dispatcher "owns" each active week for flat-expense billing.
+        $weekOwner = [];
+        foreach ($buckets as $bucket) {
+            $weekOwner[(string) $bucket->week_start] = (string) $bucket->dispatcher;
+        }
+        foreach ($activeWeeks as $week) {
+            if (! isset($weekOwner[$week])) {
+                $weekOwner[$week] = $primary;
+            }
+        }
+
+        // Proportional day-count split by each dispatcher's gross-week count.
+        $grossWeekCounts = $byDispatcher
+            ->map(fn (Collection $group) => $group->pluck('week_start')->unique()->count())
+            ->all();
+        $daysByDispatcher = $this->proportionalSplit((int) $row['days'], $grossWeekCounts);
+        $eventDaysByDispatcher = $this->proportionalSplit((int) ($row['productive_event_days'] ?? 0), $grossWeekCounts);
+
+        $result = [];
+
+        foreach ($byDispatcher as $dispatcher => $group) {
+            $ownedWeeks = array_values(array_keys(array_filter($weekOwner, fn (string $owner) => $owner === $dispatcher)));
+            $windowWeeksForDispatcher = array_map(fn (string $w) => CarbonImmutable::parse($w), $ownedWeeks);
+
+            $financials = $this->computeFinancials($config, $expenses, $group->values(), $windowWeeksForDispatcher, $ownedWeeks);
+
+            $gross = round((float) $group->sum('week_gross'), 2);
+            $miles = round((float) $group->sum('week_miles'), 2);
+            $profitLoss = round($gross - $financials['salary'] - $financials['total_expenses'], 2);
+
+            $result[] = [
+                'driver_id' => $row['driver_id'],
+                'driver_name' => $row['driver_name'],
+                'dispatcher' => $dispatcher,
+                'truck_number' => $row['truck_number'],
+                'type' => $row['type'],
+                'days' => $daysByDispatcher[$dispatcher] ?? 0,
+                'productive_event_days' => $eventDaysByDispatcher[$dispatcher] ?? 0,
+                'total_gross' => $gross,
+                'total_miles' => $miles,
+                'rpm' => $miles > 0 ? round($gross / $miles, 2) : 0.0,
+                'salary' => $financials['salary'],
+                'expenses' => $financials['expenses'],
+                'total_expenses' => round($financials['total_expenses'] + $financials['salary'], 2),
+                'profit_loss' => $profitLoss,
+                'missing_config' => false,
+                'is_total' => false,
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Distribute an integer total across weighted buckets using the largest-
+     * remainder method so the parts always sum back to the original total.
+     *
+     * @param  array<string, int>  $weights
+     * @return array<string, int>
+     */
+    private function proportionalSplit(int $total, array $weights): array
+    {
+        $weightSum = array_sum($weights);
+
+        if ($total <= 0 || $weightSum <= 0) {
+            return array_map(fn () => 0, $weights);
+        }
+
+        $floors = [];
+        $remainders = [];
+        foreach ($weights as $key => $weight) {
+            $exact = $total * $weight / $weightSum;
+            $floors[$key] = (int) floor($exact);
+            $remainders[$key] = $exact - $floors[$key];
+        }
+
+        $left = $total - array_sum($floors);
+        arsort($remainders);
+        foreach (array_keys($remainders) as $key) {
+            if ($left <= 0) {
+                break;
+            }
+            $floors[$key]++;
+            $left--;
+        }
+
+        return $floors;
+    }
+
+    /**
+     * Per-(driver, ISO-week) gross, miles and the week's dispatcher. Reuses the
+     * exact board set and week-bump rule as {@see fetchWeeklyData} so the two
+     * stay in lockstep; the dispatcher is the one who ran the most of that
+     * driver's LOAD/DRAFT boards in the week.
+     *
+     * @return Collection<int, object>
+     */
+    private function fetchWeeklyDispatcher(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): Collection
+    {
+        $sql = <<<'SQL'
+            WITH week_boards AS (
+                SELECT
+                    gb.primary_driver_id,
+                    gb.dispatcher_id,
+                    gb.rate,
+                    gb.miles,
+                    CASE
+                        WHEN gb.end_date IS NULL
+                          OR gb.end_date::date <= (date_trunc('week', gb.start_date)::date + 7)
+                        THEN date_trunc('week', gb.start_date)::date
+                        ELSE date_trunc('week', gb.start_date)::date + 7
+                    END AS week_start
+                FROM gross_boards gb
+                WHERE gb.is_deleted = FALSE
+                  AND gb.object_type IN ('LOAD', 'DRAFT')
+                  AND gb.company_id = :company_id
+                  AND (
+                      (
+                          gb.start_date >= :start_date
+                          AND gb.start_date <= :end_date
+                          AND (gb.end_date IS NULL OR gb.end_date <= :end_date_plus_one)
+                      )
+                      OR (
+                          gb.start_date >= :start_date_minus_seven
+                          AND gb.start_date < :start_date
+                          AND gb.end_date > :start_date
+                      )
+                  )
+            ),
+            mode_dispatcher AS (
+                SELECT
+                    primary_driver_id,
+                    week_start,
+                    dispatcher_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY primary_driver_id, week_start
+                        ORDER BY COUNT(*) DESC, dispatcher_id
+                    ) AS rn
+                FROM week_boards
+                WHERE dispatcher_id IS NOT NULL
+                GROUP BY primary_driver_id, week_start, dispatcher_id
+            )
+            SELECT
+                wb.primary_driver_id AS driver_id,
+                wb.week_start,
+                ROUND(SUM(wb.rate)::numeric, 2) AS week_gross,
+                ROUND(SUM(wb.miles)::numeric, 2) AS week_miles,
+                TRIM(MAX(CONCAT(disp_user.first_name, ' ', disp_user.last_name))) AS dispatcher
+            FROM week_boards wb
+            LEFT JOIN mode_dispatcher md
+                ON md.primary_driver_id = wb.primary_driver_id
+               AND md.week_start = wb.week_start
+               AND md.rn = 1
+            LEFT JOIN dispatchers disp ON disp.id = md.dispatcher_id AND disp.is_deleted = FALSE
+            LEFT JOIN users disp_user ON disp_user.id = disp.user_id AND disp_user.is_deleted = FALSE
+            GROUP BY wb.primary_driver_id, wb.week_start
+        SQL;
+
+        $results = DB::connection('analytics')->select($sql, [
+            'company_id' => $team->external_company_id,
+            'start_date' => $startDate->toDateString(),
+            'end_date' => $endDate->toDateString(),
+            'end_date_plus_one' => $endDate->copy()->addDay()->toDateString(),
+            'start_date_minus_seven' => $startDate->copy()->subDays(7)->toDateString(),
+        ]);
+
+        return collect($results);
+    }
+
+    /**
      * Get the Monday of every ISO week that overlaps the report window.
      *
      * @return array<int, CarbonImmutable>

@@ -21,6 +21,13 @@ import { downloadElementAsPng } from '@/lib/download';
 
 type Props = {
     rows: Row[];
+    /**
+     * Rows split per (driver, dispatcher) for the dispatcher widgets: a driver
+     * who changed dispatcher inside the range is attributed week by week, so
+     * gross/net land on whoever actually ran each week. Everyone else matches
+     * their `rows` entry.
+     */
+    dispatcherRows: Row[];
     expenses: Expense[];
     startDate: string;
     endDate: string;
@@ -35,6 +42,7 @@ type Props = {
 
 export default function AnalyticsDashboard({
     rows,
+    dispatcherRows,
     expenses,
     startDate,
     endDate,
@@ -169,13 +177,13 @@ export default function AnalyticsDashboard({
                             canDownload={canManage}
                         />
                         <DispatcherChart
-                            rows={rows}
+                            rows={dispatcherRows}
                             startDate={startDate}
                             endDate={endDate}
                             canDownload={canManage}
                         />
                         <DispatcherRankings
-                            rows={rows}
+                            rows={dispatcherRows}
                             weeks={weeks}
                             canDownload={canManage}
                         />

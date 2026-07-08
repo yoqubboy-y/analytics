@@ -37,6 +37,12 @@ class AnalyticsController extends Controller
         }
 
         $rows = $this->analytics->weeklyReport($currentTeam, $startDate, $endDate);
+
+        // Per-dispatcher rows for the ranking/chart widgets — a driver split
+        // across dispatchers is attributed week by week, not lumped on their
+        // most-frequent dispatcher.
+        $dispatcherRows = $this->analytics->splitByDispatcher($currentTeam, $rows, $startDate, $endDate);
+
         $keyMetrics = $this->analytics->weeklyKeyMetrics($currentTeam, $startDate, $endDate);
 
         // Sharing/downloads are for Members and above; Viewers never see them.
@@ -66,6 +72,7 @@ class AnalyticsController extends Controller
 
         return Inertia::render('analytics/index', [
             'rows' => $rows->values(),
+            'dispatcherRows' => $dispatcherRows->values(),
             'keyMetrics' => $keyMetrics,
             'expenses' => $currentTeam->expenses->map(fn ($e) => [
                 'id' => $e->id,

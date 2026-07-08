@@ -85,6 +85,7 @@ class AnalyticsComparisonController extends Controller
     private function payloadFor(Team $team, Carbon|CarbonImmutable $start, Carbon|CarbonImmutable $end, $user): array
     {
         $rows = $this->analytics->weeklyReport($team, $start, $end);
+        $dispatcherRows = $this->analytics->splitByDispatcher($team, $rows, $start, $end);
         $keyMetrics = $this->analytics->weeklyKeyMetrics($team, $start, $end);
 
         $canManage = $user->teamRole($team)?->isAtLeast(TeamRole::Member) ?? false;
@@ -94,6 +95,7 @@ class AnalyticsComparisonController extends Controller
             'name' => $team->name,
             'dataSource' => $team->data_source->value,
             'rows' => $rows->values(),
+            'dispatcherRows' => $dispatcherRows->values(),
             'keyMetrics' => $keyMetrics,
             'expenses' => $team->expenses->map(fn ($e) => [
                 'id' => $e->id,

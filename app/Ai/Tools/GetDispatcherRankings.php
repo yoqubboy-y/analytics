@@ -21,8 +21,10 @@ class GetDispatcherRankings extends AnalyticsTool implements Tool
 
         $weeks = max(1, ((int) $start->diffInDays($end) + 1) / 7);
 
-        $rows = $this->analytics()->weeklyReport($this->team, $start, $end)
-            ->where('is_total', false)
+        // Dispatcher-split rows attribute each ISO week's gross/net to the
+        // dispatcher who actually ran it, so a driver who changed dispatcher
+        // mid-range no longer dumps their whole total on one of them.
+        $rows = $this->analytics()->dispatcherRows($this->team, $start, $end)
             ->where('missing_config', false);
 
         $ranked = $rows

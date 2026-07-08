@@ -85,11 +85,13 @@ class DashboardShareController extends Controller
         $endDate = $share->end_date;
 
         $rows = $this->analytics->weeklyReport($team, $startDate, $endDate);
+        $dispatcherRows = $this->analytics->splitByDispatcher($team, $rows, $startDate, $endDate);
         $keyMetrics = $this->analytics->weeklyKeyMetrics($team, $startDate, $endDate);
 
         return Inertia::render('shared/dashboard', [
             'teamName' => $team->name,
             'rows' => $rows->values(),
+            'dispatcherRows' => $dispatcherRows->values(),
             'keyMetrics' => $keyMetrics,
             'expenses' => $team->expenses->map(fn ($e) => [
                 'id' => $e->id,

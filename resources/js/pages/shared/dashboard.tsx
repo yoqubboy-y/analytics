@@ -11,6 +11,8 @@ import type { Expense, Row } from '@/components/analytics/pnl-table';
 type Props = {
     teamName: string;
     rows: Row[];
+    /** Per-(driver, dispatcher) rows for the dispatcher widgets — see analytics/index. */
+    dispatcherRows: Row[];
     expenses: Expense[];
     startDate: string;
     endDate: string;
@@ -22,6 +24,7 @@ type Props = {
 export default function SharedDashboard({
     teamName,
     rows,
+    dispatcherRows,
     expenses,
     startDate,
     endDate,
@@ -93,13 +96,16 @@ export default function SharedDashboard({
                             )}
                             {shows('dispatcher_chart') && (
                                 <DispatcherChart
-                                    rows={rows}
+                                    rows={dispatcherRows}
                                     startDate={startDate}
                                     endDate={endDate}
                                 />
                             )}
                             {shows('dispatcher_rankings') && (
-                                <DispatcherRankings rows={rows} weeks={weeks} />
+                                <DispatcherRankings
+                                    rows={dispatcherRows}
+                                    weeks={weeks}
+                                />
                             )}
                         </div>
                     )}
