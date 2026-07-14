@@ -193,6 +193,9 @@ const emptyExpense = {
 
 type RateDialogTarget = { kind: 'driver' | 'expense'; id: number };
 
+/** "No filter" sentinel — Select can't take an empty string as a value. */
+const ALL = 'all';
+
 export default function Configuration({
     driverConfigs,
     expenses,
@@ -210,10 +213,72 @@ export default function Configuration({
     // --- Driver Config Editing ---
     const [driverPage, setDriverPage] = useState(1);
     const [driverPageSize, setDriverPageSize] = useState(15);
-    const driverPageCount = Math.ceil(driverConfigs.length / driverPageSize);
-    const pagedDriverConfigs = driverConfigs.slice(
-        (driverPage - 1) * driverPageSize,
-        driverPage * driverPageSize,
+
+    // --- Driver Config search & filters ---
+    // The whole config list is already on the page, so filtering is local and
+    // instant — no round trip.
+    const [driverSearch, setDriverSearch] = useState('');
+    const [dispatcherFilter, setDispatcherFilter] = useState(ALL);
+    const [contractFilter, setContractFilter] = useState(ALL);
+
+    // Dispatchers actually present on this team's configs.
+    const dispatcherOptions = useMemo(
+        () =>
+            Array.from(
+                new Set(
+                    driverConfigs
+                        .map((dc) => dc.dispatcher?.trim())
+                        .filter((d): d is string => !!d),
+                ),
+            ).sort((a, b) => a.localeCompare(b)),
+        [driverConfigs],
+    );
+
+    const filteredDriverConfigs = useMemo(() => {
+        const term = driverSearch.trim().toLowerCase();
+
+        return driverConfigs.filter((dc) => {
+            if (term && !(dc.driver_name ?? '').toLowerCase().includes(term)) {
+                return false;
+            }
+
+            if (
+                dispatcherFilter !== ALL &&
+                (dc.dispatcher?.trim() ?? '') !== dispatcherFilter
+            ) {
+                return false;
+            }
+
+            if (contractFilter !== ALL && dc.contract_type !== contractFilter) {
+                return false;
+            }
+
+            return true;
+        });
+    }, [driverConfigs, driverSearch, dispatcherFilter, contractFilter]);
+
+    const hasDriverFilters =
+        driverSearch.trim() !== '' ||
+        dispatcherFilter !== ALL ||
+        contractFilter !== ALL;
+
+    function clearDriverFilters() {
+        setDriverSearch('');
+        setDispatcherFilter(ALL);
+        setContractFilter(ALL);
+        setDriverPage(1);
+    }
+
+    const driverPageCount = Math.max(
+        1,
+        Math.ceil(filteredDriverConfigs.length / driverPageSize),
+    );
+    // Narrowing the list can strand the user past the last page — clamp so the
+    // table never renders blank after a filter change.
+    const safeDriverPage = Math.min(driverPage, driverPageCount);
+    const pagedDriverConfigs = filteredDriverConfigs.slice(
+        (safeDriverPage - 1) * driverPageSize,
+        safeDriverPage * driverPageSize,
     );
 
     const isXlsx = dataSource === 'xlsx';
@@ -239,6 +304,7 @@ export default function Configuration({
                 .map((dc) => dc.external_driver_key)
                 .filter((k): k is string => !!k),
         );
+
         return importedDrivers.filter((d) => !taken.has(d.external_driver_key));
     }, [importedDrivers, driverConfigs]);
 
@@ -263,7 +329,7 @@ export default function Configuration({
             storeDriverConfig.url(slug),
             // Inertia accepts JSON-serialisable payloads at runtime; its TS
             // typing is conservative for mixed-shape `Record<string, unknown>`.
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
             payload as any,
             {
                 onSuccess: () => {
@@ -493,13 +559,96 @@ export default function Configuration({
 
                     {/* Driver Contracts Tab */}
                     <TabsContent value="drivers" className="mt-4">
-                        <div className="mb-4 flex justify-end">
+                        <div className="mb-4 flex flex-wrap items-center gap-2">
+                            <Input
+                                value={driverSearch}
+                                onChange={(e) => {
+                                    setDriverSearch(e.target.value);
+                                    setDriverPage(1);
+                                }}
+                                placeholder="Search driver…"
+                                aria-label="Search drivers by name"
+                                className="h-8 w-full sm:w-56"
+                            />
+
+                            <Select
+                                value={dispatcherFilter}
+                                onValueChange={(v) => {
+                                    setDispatcherFilter(v);
+                                    setDriverPage(1);
+                                }}
+                            >
+                                <SelectTrigger
+                                    className="h-8 w-auto min-w-40"
+                                    aria-label="Filter by dispatcher"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value={ALL}>
+                                        All dispatchers
+                                    </SelectItem>
+                                    {dispatcherOptions.map((d) => (
+                                        <SelectItem key={d} value={d}>
+                                            {d}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+
+                            <Select
+                                value={contractFilter}
+                                onValueChange={(v) => {
+                                    setContractFilter(v);
+                                    setDriverPage(1);
+                                }}
+                            >
+                                <SelectTrigger
+                                    className="h-8 w-auto min-w-40"
+                                    aria-label="Filter by contract type"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value={ALL}>
+                                        All contract types
+                                    </SelectItem>
+                                    {contractTypes.map((c) => (
+                                        <SelectItem
+                                            key={c.value}
+                                            value={c.value}
+                                        >
+                                            {c.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+
+                            {hasDriverFilters && (
+                                <>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8"
+                                        onClick={clearDriverFilters}
+                                    >
+                                        Clear
+                                    </Button>
+                                    <span className="text-xs text-muted-foreground tabular-nums">
+                                        {filteredDriverConfigs.length} of{' '}
+                                        {driverConfigs.length}
+                                    </span>
+                                </>
+                            )}
+
                             <Dialog
                                 open={addDriverOpen}
                                 onOpenChange={setAddDriverOpen}
                             >
                                 <DialogTrigger asChild>
-                                    <Button size="sm">Add Driver Config</Button>
+                                    <Button size="sm" className="ml-auto">
+                                        Add Driver Config
+                                    </Button>
                                 </DialogTrigger>
                                 <DialogContent>
                                     <DialogHeader>
@@ -524,7 +673,8 @@ export default function Configuration({
                                                         onValueChange={(v) =>
                                                             setNewDriverConfig({
                                                                 ...newDriverConfig,
-                                                                external_driver_key: v,
+                                                                external_driver_key:
+                                                                    v,
                                                             })
                                                         }
                                                     >
@@ -532,9 +682,11 @@ export default function Configuration({
                                                             <SelectValue placeholder="Pick a driver…" />
                                                         </SelectTrigger>
                                                         <SelectContent>
-                                                            {unconfiguredImportedDrivers.length === 0 && (
+                                                            {unconfiguredImportedDrivers.length ===
+                                                                0 && (
                                                                 <div className="px-3 py-2 text-xs text-muted-foreground">
-                                                                    {importedDrivers.length === 0
+                                                                    {importedDrivers.length ===
+                                                                    0
                                                                         ? 'No imported drivers yet — upload a workbook first.'
                                                                         : 'Every imported driver already has a config.'}
                                                                 </div>
@@ -542,11 +694,19 @@ export default function Configuration({
                                                             {unconfiguredImportedDrivers.map(
                                                                 (d) => (
                                                                     <SelectItem
-                                                                        key={d.external_driver_key}
-                                                                        value={d.external_driver_key}
+                                                                        key={
+                                                                            d.external_driver_key
+                                                                        }
+                                                                        value={
+                                                                            d.external_driver_key
+                                                                        }
                                                                     >
-                                                                        {d.driver_name}
-                                                                        {d.truck_number ? ` · ${d.truck_number}` : ''}
+                                                                        {
+                                                                            d.driver_name
+                                                                        }
+                                                                        {d.truck_number
+                                                                            ? ` · ${d.truck_number}`
+                                                                            : ''}
                                                                     </SelectItem>
                                                                 ),
                                                             )}
@@ -570,7 +730,8 @@ export default function Configuration({
                                                             setNewDriverConfig({
                                                                 ...newDriverConfig,
                                                                 external_driver_id:
-                                                                    e.target.value,
+                                                                    e.target
+                                                                        .value,
                                                             })
                                                         }
                                                         placeholder="e.g. 42"
@@ -586,11 +747,14 @@ export default function Configuration({
                                                 </Label>
                                                 <Input
                                                     id="dc-dispatcher"
-                                                    value={newDriverConfig.dispatcher}
+                                                    value={
+                                                        newDriverConfig.dispatcher
+                                                    }
                                                     onChange={(e) =>
                                                         setNewDriverConfig({
                                                             ...newDriverConfig,
-                                                            dispatcher: e.target.value,
+                                                            dispatcher:
+                                                                e.target.value,
                                                         })
                                                     }
                                                     placeholder="e.g. Aidan Scott"
@@ -721,6 +885,18 @@ export default function Configuration({
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
+                                    {pagedDriverConfigs.length === 0 && (
+                                        <TableRow>
+                                            <TableCell
+                                                colSpan={5}
+                                                className="py-8 text-center text-sm text-muted-foreground"
+                                            >
+                                                {hasDriverFilters
+                                                    ? 'No drivers match these filters.'
+                                                    : 'No driver configs yet.'}
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
                                     {pagedDriverConfigs.map((dc) => {
                                         const isEditing =
                                             editingDriver?.id === dc.id;
@@ -733,19 +909,33 @@ export default function Configuration({
                                                 <TableCell>
                                                     {isEditing ? (
                                                         <Input
-                                                            value={editingDriver.dispatcher}
+                                                            value={
+                                                                editingDriver.dispatcher
+                                                            }
                                                             onChange={(e) =>
-                                                                setEditingDriver({
-                                                                    ...editingDriver,
-                                                                    dispatcher: e.target.value,
-                                                                })
+                                                                setEditingDriver(
+                                                                    {
+                                                                        ...editingDriver,
+                                                                        dispatcher:
+                                                                            e
+                                                                                .target
+                                                                                .value,
+                                                                    },
+                                                                )
                                                             }
                                                             placeholder="Aidan Scott"
                                                             className="w-40"
                                                         />
                                                     ) : (
-                                                        <span className={dc.dispatcher ? '' : 'text-muted-foreground'}>
-                                                            {dc.dispatcher ?? '—'}
+                                                        <span
+                                                            className={
+                                                                dc.dispatcher
+                                                                    ? ''
+                                                                    : 'text-muted-foreground'
+                                                            }
+                                                        >
+                                                            {dc.dispatcher ??
+                                                                '—'}
                                                         </span>
                                                     )}
                                                 </TableCell>
@@ -898,12 +1088,15 @@ export default function Configuration({
                                         <PaginationItem>
                                             <PaginationPrevious
                                                 onClick={() =>
-                                                    setDriverPage((p) =>
-                                                        Math.max(1, p - 1),
+                                                    setDriverPage(
+                                                        Math.max(
+                                                            1,
+                                                            safeDriverPage - 1,
+                                                        ),
                                                     )
                                                 }
                                                 className={
-                                                    driverPage <= 1
+                                                    safeDriverPage <= 1
                                                         ? 'pointer-events-none opacity-50'
                                                         : 'cursor-pointer'
                                                 }
@@ -911,30 +1104,32 @@ export default function Configuration({
                                         </PaginationItem>
                                         <PaginationItem>
                                             <span className="px-3 py-2 text-sm text-muted-foreground">
-                                                {(driverPage - 1) *
+                                                {(safeDriverPage - 1) *
                                                     driverPageSize +
                                                     1}
                                                 –
                                                 {Math.min(
-                                                    driverPage * driverPageSize,
-                                                    driverConfigs.length,
+                                                    safeDriverPage *
+                                                        driverPageSize,
+                                                    filteredDriverConfigs.length,
                                                 )}{' '}
-                                                of {driverConfigs.length}{' '}
+                                                of{' '}
+                                                {filteredDriverConfigs.length}{' '}
                                                 drivers
                                             </span>
                                         </PaginationItem>
                                         <PaginationItem>
                                             <PaginationNext
                                                 onClick={() =>
-                                                    setDriverPage((p) =>
+                                                    setDriverPage(
                                                         Math.min(
                                                             driverPageCount,
-                                                            p + 1,
+                                                            safeDriverPage + 1,
                                                         ),
                                                     )
                                                 }
                                                 className={
-                                                    driverPage >=
+                                                    safeDriverPage >=
                                                     driverPageCount
                                                         ? 'pointer-events-none opacity-50'
                                                         : 'cursor-pointer'
@@ -1136,7 +1331,9 @@ export default function Configuration({
                                                 <Label>
                                                     Driver covers{' '}
                                                     <span className="font-normal text-muted-foreground">
-                                                        (income for carrier — flips to negative on those rows)
+                                                        (income for carrier —
+                                                        flips to negative on
+                                                        those rows)
                                                     </span>
                                                 </Label>
                                                 <ToggleGroup
@@ -1149,7 +1346,8 @@ export default function Configuration({
                                                     onValueChange={(v) =>
                                                         setNewExpense({
                                                             ...newExpense,
-                                                            driver_paid_contract_types: v,
+                                                            driver_paid_contract_types:
+                                                                v,
                                                         })
                                                     }
                                                 >
@@ -1163,7 +1361,11 @@ export default function Configuration({
                                                     ))}
                                                 </ToggleGroup>
                                                 <p className="text-xs text-muted-foreground">
-                                                    For these contract types the driver pays this out of their salary share, so the carrier collects it as income instead of paying it.
+                                                    For these contract types the
+                                                    driver pays this out of
+                                                    their salary share, so the
+                                                    carrier collects it as
+                                                    income instead of paying it.
                                                 </p>
                                             </div>
                                             <div className="sm:col-span-2">
@@ -1352,7 +1554,8 @@ export default function Configuration({
                                                                         : 'Selected only'}
                                                                 </span>
                                                                 <span className="mt-2 text-xs text-muted-foreground">
-                                                                    Driver covers
+                                                                    Driver
+                                                                    covers
                                                                 </span>
                                                                 <ToggleGroup
                                                                     type="multiple"
@@ -1378,12 +1581,20 @@ export default function Configuration({
                                                                     }
                                                                 >
                                                                     {contractTypes.map(
-                                                                        (ct) => (
+                                                                        (
+                                                                            ct,
+                                                                        ) => (
                                                                             <ToggleGroupItem
-                                                                                key={ct.value}
-                                                                                value={ct.value}
+                                                                                key={
+                                                                                    ct.value
+                                                                                }
+                                                                                value={
+                                                                                    ct.value
+                                                                                }
                                                                             >
-                                                                                {ct.label}
+                                                                                {
+                                                                                    ct.label
+                                                                                }
                                                                             </ToggleGroupItem>
                                                                         ),
                                                                     )}
@@ -1458,14 +1669,28 @@ export default function Configuration({
                                                                         .length >
                                                                         0 && (
                                                                         <span className="text-xs text-sky-600 dark:text-sky-400">
-                                                                            Driver covers ({exp.driver_paid_contract_types
+                                                                            Driver
+                                                                            covers
+                                                                            (
+                                                                            {exp.driver_paid_contract_types
                                                                                 .map(
-                                                                                    (v) =>
+                                                                                    (
+                                                                                        v,
+                                                                                    ) =>
                                                                                         contractTypes.find(
-                                                                                            (ct) => ct.value === v,
-                                                                                        )?.label ?? v,
+                                                                                            (
+                                                                                                ct,
+                                                                                            ) =>
+                                                                                                ct.value ===
+                                                                                                v,
+                                                                                        )
+                                                                                            ?.label ??
+                                                                                        v,
                                                                                 )
-                                                                                .join(', ')})
+                                                                                .join(
+                                                                                    ', ',
+                                                                                )}
+                                                                            )
                                                                         </span>
                                                                     )}
                                                             </span>
