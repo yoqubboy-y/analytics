@@ -25,6 +25,7 @@ class TeamExpenseFactory extends Factory
             'name' => $this->faker->words(3, asText: true),
             'description' => $this->faker->optional()->sentence(),
             'calculation_type' => $this->faker->randomElement(ExpenseCalculationType::cases()),
+            'applies_to_actual' => true,
             'applies_to' => null,
             'sort_order' => 0,
         ];

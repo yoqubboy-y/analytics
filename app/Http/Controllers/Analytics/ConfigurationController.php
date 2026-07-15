@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Analytics;
 
 use App\Enums\DriverAssignmentKind;
 use App\Enums\DriverContractType;
-use App\Enums\ExpenseActualSource;
 use App\Enums\ExpenseCalculationType;
 use App\Enums\TeamDataSource;
 use App\Enums\TeamPermission;
@@ -105,7 +104,11 @@ class ConfigurationController extends Controller
                     'name' => $e->name,
                     'description' => $e->description,
                     'calculation_type' => $e->calculation_type->value,
+                    // actual_source (read-only) flags the 5 file-backed expenses
+                    // so the UI can show they always pull real dollars; applies_to_actual
+                    // is the editable "include in the Actual P&L" toggle for the rest.
                     'actual_source' => $e->actual_source?->value,
+                    'applies_to_actual' => $e->applies_to_actual,
                     'current_rate' => $e->currentRate(),
                     'rates' => $e->rates->sortByDesc('effective_from')->values()
                         ->map(fn (TeamExpenseRate $r) => [
@@ -127,10 +130,6 @@ class ConfigurationController extends Controller
                 'value' => $c->value,
                 'label' => $c->label(),
             ], ExpenseCalculationType::cases()),
-            'actualSources' => array_map(fn ($s) => [
-                'value' => $s->value,
-                'label' => $s->label(),
-            ], ExpenseActualSource::cases()),
         ]);
     }
 
@@ -321,7 +320,7 @@ class ConfigurationController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:500'],
             'calculation_type' => ['required', Rule::enum(ExpenseCalculationType::class)],
-            'actual_source' => ['nullable', Rule::enum(ExpenseActualSource::class)],
+            'applies_to_actual' => ['boolean'],
             'rate' => ['required', 'numeric', 'min:0'],
             'effective_from' => ['required', 'date'],
             'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
@@ -337,7 +336,7 @@ class ConfigurationController extends Controller
             'name' => $data['name'],
             'description' => $data['description'] ?? null,
             'calculation_type' => $data['calculation_type'],
-            'actual_source' => $data['actual_source'] ?? null,
+            'applies_to_actual' => $data['applies_to_actual'] ?? true,
             'applies_to' => $data['applies_to'] ?? null,
             'driver_paid_contract_types' => $data['driver_paid_contract_types'] ?? null,
             'skip_when_no_gross' => $data['skip_when_no_gross'] ?? false,
@@ -361,7 +360,7 @@ class ConfigurationController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:500'],
             'calculation_type' => ['required', Rule::enum(ExpenseCalculationType::class)],
-            'actual_source' => ['nullable', Rule::enum(ExpenseActualSource::class)],
+            'applies_to_actual' => ['boolean'],
             'applies_to' => ['nullable', 'array'],
             'applies_to.*' => [Rule::enum(DriverContractType::class)],
             'driver_paid_contract_types' => ['nullable', 'array'],
@@ -369,9 +368,6 @@ class ConfigurationController extends Controller
             'skip_when_no_gross' => ['boolean'],
             'sort_order' => ['integer', 'min:0'],
         ]);
-
-        // Absent in the request → leave unchanged; explicit null → clear it.
-        $data['actual_source'] = $data['actual_source'] ?? null;
 
         $teamExpense->update($data);
 

@@ -108,25 +108,54 @@ test('actual basis with no data for the unit/week charges $0', function () {
     expect($actual['expenses']['Truck Payment'])->toBe(0.0);
 });
 
-test('an expense can be given and cleared of an actual source via the config endpoints', function () {
+test('applies_to_actual can be set and cleared via the config endpoints', function () {
     [$user, $team] = createTeamMember(TeamRole::Admin);
 
     $this->actingAs($user)->from("/{$team->slug}/configuration")
         ->post(route('configuration.expenses.store', $team), [
-            'name' => 'Fuel', 'calculation_type' => 'per_mile', 'actual_source' => 'fuel',
-            'rate' => 0.8, 'effective_from' => '2026-07-06',
+            'name' => 'Insurance', 'calculation_type' => 'flat', 'applies_to_actual' => true,
+            'rate' => 250, 'effective_from' => '2026-07-06',
         ])->assertRedirect();
 
-    $expense = $team->expenses()->where('name', 'Fuel')->first();
-    expect($expense->actual_source)->toBe(ExpenseActualSource::Fuel);
+    $expense = $team->expenses()->where('name', 'Insurance')->first();
+    expect($expense->applies_to_actual)->toBeTrue();
 
-    // Clearing it back to null (the "None" option) is honored.
+    // Unchecking it excludes the expense from the Actual P&L.
     $this->actingAs($user)->from("/{$team->slug}/configuration")
         ->patch(route('configuration.expenses.update', [$team, $expense]), [
-            'name' => 'Fuel', 'calculation_type' => 'per_mile', 'actual_source' => null,
+            'name' => 'Insurance', 'calculation_type' => 'flat', 'applies_to_actual' => false,
         ])->assertRedirect();
 
-    expect($expense->fresh()->actual_source)->toBeNull();
+    expect($expense->fresh()->applies_to_actual)->toBeFalse();
+});
+
+test('an expense with applies_to_actual=false is dropped from the actual P&L but kept in KPI', function () {
+    $team = Team::factory()->create();
+    $config = DriverConfig::factory()->for($team)->create(['contract_type' => DriverContractType::CompanyCpm]);
+    $config->rates()->create(['tariff_rate' => 0.65, 'effective_from' => WK]);
+    $config->load('rates', 'assignments');
+
+    // A flat "Backoffice" fee (no actual source) the user has excluded from actual.
+    $backoffice = TeamExpense::factory()->for($team)->create([
+        'name' => 'Backoffice',
+        'calculation_type' => ExpenseCalculationType::Flat,
+        'actual_source' => null,
+        'applies_to_actual' => false,
+        'applies_to' => null,
+    ]);
+    $backoffice->rates()->create(['rate' => 58, 'effective_from' => WK]);
+    $expenses = collect([$backoffice->load('rates')]);
+
+    $svc = app(AnalyticsService::class);
+    $windowWeeks = [CarbonImmutable::parse(WK)];
+    $lookup = ExpenseActualsLookup::forWindow(CarbonImmutable::parse(WK), CarbonImmutable::parse(WK));
+
+    $kpi = $svc->computeFinancials($config, $expenses, buckets(), $windowWeeks, [WK], 'kpi');
+    $actual = $svc->computeFinancials($config, $expenses, buckets(), $windowWeeks, [WK], 'actual', 'GL7005', $lookup);
+
+    expect($kpi['expenses']['Backoffice'])->toBe(58.0)
+        ->and($actual['expenses'])->not->toHaveKey('Backoffice')
+        ->and($actual['total_expenses'])->toBe(0.0);
 });
 
 test('a non-sourced expense is identical across bases', function () {

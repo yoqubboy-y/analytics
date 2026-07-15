@@ -111,8 +111,10 @@ type TeamExpense = {
     name: string;
     description: string | null;
     calculation_type: string;
-    /** Real-data source for actual-basis reports; null = always a rate. */
+    /** Set on the 5 file-backed expenses; they always show real dollars in Actual mode. Read-only. */
     actual_source: string | null;
+    /** Whether this expense is included in the Actual P&L (editable per expense). */
+    applies_to_actual: boolean;
     current_rate: number | null;
     rates: ExpenseRate[];
     applies_to: string[] | null;
@@ -126,7 +128,6 @@ type Props = {
     expenses: TeamExpense[];
     contractTypes: ContractType[];
     calculationTypes: CalculationType[];
-    actualSources: { value: string; label: string }[];
     importedDrivers: ImportedDriver[];
     dataSource: 'analytics_db' | 'xlsx';
     canImport: boolean;
@@ -191,11 +192,46 @@ function SkipNoGrossCheckbox({
     );
 }
 
+function AppliesToActualCheckbox({
+    checked,
+    onChange,
+}: {
+    checked: boolean;
+    onChange: (v: boolean) => void;
+}) {
+    const id = useId();
+
+    return (
+        <div className="relative flex w-full items-start gap-2 rounded-md border border-input p-3 shadow-xs outline-none has-data-[state=checked]:border-primary/50">
+            <div className="grid grow gap-1">
+                <Label htmlFor={id} className="cursor-pointer">
+                    Include in Actual P&amp;L
+                </Label>
+                <p
+                    className="text-xs text-muted-foreground"
+                    id={`${id}-description`}
+                >
+                    When the report is in Actual mode, show this expense (at its
+                    rate) as a real cost. Uncheck it to leave it out of the
+                    factual numbers — it still counts in KPI mode.
+                </p>
+            </div>
+            <Checkbox
+                id={id}
+                aria-describedby={`${id}-description`}
+                className="order-1 after:absolute after:inset-0"
+                checked={checked}
+                onCheckedChange={(v) => onChange(v === true)}
+            />
+        </div>
+    );
+}
+
 const emptyExpense = {
     name: '',
     description: '',
     calculation_type: 'flat',
-    actual_source: 'none',
+    applies_to_actual: true,
     rate: '',
     effective_from: isoMonday(),
     applies_to: [] as string[],
@@ -209,15 +245,11 @@ type RateDialogTarget = { kind: 'driver' | 'expense'; id: number };
 /** "No filter" sentinel — Select can't take an empty string as a value. */
 const ALL = 'all';
 
-/** "No actual source" sentinel for the expense Select (null on the wire). */
-const NONE = 'none';
-
 export default function Configuration({
     driverConfigs,
     expenses,
     contractTypes,
     calculationTypes,
-    actualSources,
     importedDrivers,
     dataSource,
     canImport,
@@ -409,10 +441,7 @@ export default function Configuration({
                         ? newExpense.driver_paid_contract_types
                         : null,
                 skip_when_no_gross: newExpense.skip_when_no_gross,
-                actual_source:
-                    newExpense.actual_source === NONE
-                        ? null
-                        : newExpense.actual_source,
+                applies_to_actual: newExpense.applies_to_actual,
             },
             {
                 onSuccess: () => {
@@ -449,10 +478,7 @@ export default function Configuration({
                         : null,
                 skip_when_no_gross: editingExpense.skip_when_no_gross,
                 sort_order: editingExpense.sort_order,
-                actual_source:
-                    editingExpense.actual_source === NONE
-                        ? null
-                        : editingExpense.actual_source,
+                applies_to_actual: editingExpense.applies_to_actual,
             },
             { onSuccess: () => setEditingExpense(null) },
         );
@@ -1312,52 +1338,6 @@ export default function Configuration({
                                                 </Select>
                                             </div>
                                             <div className="flex flex-col gap-1">
-                                                <Label htmlFor="exp-actual-source">
-                                                    Actual source
-                                                </Label>
-                                                <Select
-                                                    value={
-                                                        newExpense.actual_source
-                                                    }
-                                                    onValueChange={(v) =>
-                                                        setNewExpense({
-                                                            ...newExpense,
-                                                            actual_source: v,
-                                                        })
-                                                    }
-                                                >
-                                                    <SelectTrigger id="exp-actual-source">
-                                                        <SelectValue />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem
-                                                            value={NONE}
-                                                        >
-                                                            None (use rate)
-                                                        </SelectItem>
-                                                        {actualSources.map(
-                                                            (s) => (
-                                                                <SelectItem
-                                                                    key={
-                                                                        s.value
-                                                                    }
-                                                                    value={
-                                                                        s.value
-                                                                    }
-                                                                >
-                                                                    {s.label}
-                                                                </SelectItem>
-                                                            ),
-                                                        )}
-                                                    </SelectContent>
-                                                </Select>
-                                                <p className="text-xs text-muted-foreground">
-                                                    In "Actual" P&amp;L mode,
-                                                    pull real dollars from this
-                                                    source instead of the rate.
-                                                </p>
-                                            </div>
-                                            <div className="flex flex-col gap-1">
                                                 <Label htmlFor="exp-rate">
                                                     Rate
                                                 </Label>
@@ -1521,6 +1501,20 @@ export default function Configuration({
                                                     }
                                                 />
                                             </div>
+                                            <div className="sm:col-span-2">
+                                                <AppliesToActualCheckbox
+                                                    checked={
+                                                        newExpense.applies_to_actual
+                                                    }
+                                                    onChange={(v) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            applies_to_actual:
+                                                                v,
+                                                        })
+                                                    }
+                                                />
+                                            </div>
                                         </div>
                                     </form>
                                     <DialogFooter>
@@ -1542,7 +1536,7 @@ export default function Configuration({
                                         <TableRow>
                                             <TableHead>Name</TableHead>
                                             <TableHead>Type</TableHead>
-                                            <TableHead>Actual</TableHead>
+                                            <TableHead>In Actual</TableHead>
                                             <TableHead>Current Rate</TableHead>
                                             <TableHead>Applies To</TableHead>
                                             <TableHead></TableHead>
@@ -1628,68 +1622,39 @@ export default function Configuration({
                                                         )}
                                                     </TableCell>
                                                     <TableCell>
-                                                        {isEditing ? (
-                                                            <Select
-                                                                value={
-                                                                    editingExpense.actual_source ??
-                                                                    NONE
-                                                                }
-                                                                onValueChange={(
-                                                                    v,
-                                                                ) =>
-                                                                    setEditingExpense(
-                                                                        {
-                                                                            ...editingExpense,
-                                                                            actual_source:
-                                                                                v ===
-                                                                                NONE
-                                                                                    ? null
-                                                                                    : v,
-                                                                        },
-                                                                    )
-                                                                }
-                                                            >
-                                                                <SelectTrigger className="w-36">
-                                                                    <SelectValue />
-                                                                </SelectTrigger>
-                                                                <SelectContent>
-                                                                    <SelectItem
-                                                                        value={
-                                                                            NONE
-                                                                        }
-                                                                    >
-                                                                        None
-                                                                    </SelectItem>
-                                                                    {actualSources.map(
-                                                                        (s) => (
-                                                                            <SelectItem
-                                                                                key={
-                                                                                    s.value
-                                                                                }
-                                                                                value={
-                                                                                    s.value
-                                                                                }
-                                                                            >
-                                                                                {
-                                                                                    s.label
-                                                                                }
-                                                                            </SelectItem>
-                                                                        ),
-                                                                    )}
-                                                                </SelectContent>
-                                                            </Select>
-                                                        ) : exp.actual_source ? (
+                                                        {exp.actual_source ? (
+                                                            // The 5 file-backed expenses are always in Actual mode, at real dollars.
+                                                            <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                                                                Real $
+                                                            </span>
+                                                        ) : isEditing ? (
+                                                            <label className="flex cursor-pointer items-center gap-2 text-xs">
+                                                                <Checkbox
+                                                                    checked={
+                                                                        editingExpense.applies_to_actual
+                                                                    }
+                                                                    onCheckedChange={(
+                                                                        v,
+                                                                    ) =>
+                                                                        setEditingExpense(
+                                                                            {
+                                                                                ...editingExpense,
+                                                                                applies_to_actual:
+                                                                                    v ===
+                                                                                    true,
+                                                                            },
+                                                                        )
+                                                                    }
+                                                                />
+                                                                Included
+                                                            </label>
+                                                        ) : exp.applies_to_actual ? (
                                                             <span className="text-xs font-medium">
-                                                                {actualSources.find(
-                                                                    (s) =>
-                                                                        s.value ===
-                                                                        exp.actual_source,
-                                                                )?.label ??
-                                                                    exp.actual_source}
+                                                                Included
                                                             </span>
                                                         ) : (
                                                             <span className="text-xs text-muted-foreground">
-                                                                —
+                                                                Excluded
                                                             </span>
                                                         )}
                                                     </TableCell>

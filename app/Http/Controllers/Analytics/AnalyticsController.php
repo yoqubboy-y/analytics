@@ -87,11 +87,17 @@ class AnalyticsController extends Controller
             'rows' => $rows->values(),
             'dispatcherRows' => $dispatcherRows->values(),
             'keyMetrics' => $keyMetrics,
-            'expenses' => $currentTeam->expenses->map(fn ($e) => [
-                'id' => $e->id,
-                'name' => $e->name,
-                'calculation_type' => $e->calculation_type->value,
-            ])->values(),
+            // In Actual mode, only columns that belong in the factual P&L are
+            // shown: the actual-backed expenses plus any expense marked "applies
+            // to actual". KPI-only estimates drop out so the table matches the
+            // computed rows (which exclude them too).
+            'expenses' => $currentTeam->expenses
+                ->filter(fn ($e) => $basis !== 'actual' || $e->actual_source !== null || $e->applies_to_actual)
+                ->map(fn ($e) => [
+                    'id' => $e->id,
+                    'name' => $e->name,
+                    'calculation_type' => $e->calculation_type->value,
+                ])->values(),
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
             'basis' => $basis,
