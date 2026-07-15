@@ -2,6 +2,7 @@ import { Head, router } from '@inertiajs/react';
 import { ArrowUpRight } from 'lucide-react';
 import { index as analyticsIndex } from '@/actions/App/Http/Controllers/Analytics/AnalyticsController';
 import { index as overviewIndex } from '@/actions/App/Http/Controllers/Analytics/OverviewController';
+import { BasisToggle } from '@/components/basis-toggle';
 import { DateRangePicker } from '@/components/date-range-picker';
 import {
     Table,
@@ -24,6 +25,12 @@ type TeamCard = {
     configured_drivers: number;
     unconfigured_drivers: number;
     net: number | null;
+    /** Gross ÷ trucks. */
+    avg_per_truck: number;
+    /** Net ÷ configured trucks; null when the team has no configured drivers. */
+    net_per_truck: number | null;
+    /** Net ÷ gross as a percentage; null when net is null. */
+    margin: number | null;
     utilization: number;
     data_through: string | null;
     is_live: boolean;
@@ -32,6 +39,12 @@ type TeamCard = {
 type Props = {
     startDate: string;
     endDate: string;
+    /** Expense basis the figures were computed on. */
+    basis: 'kpi' | 'actual';
+    /** Whether the selected range is within loaded actuals. */
+    actualAvailable: boolean;
+    /** [firstWeekStart, lastWeekStart] of loaded actuals, or null. */
+    coveredRange: [string, string] | null;
     company: {
         teams: number;
         gross: number;
@@ -96,22 +109,38 @@ function Stat({
 export default function Overview({
     startDate,
     endDate,
+    basis,
+    actualAvailable,
+    coveredRange,
     company,
     teams,
 }: Props) {
     function handleRangeChange(start: string, end: string) {
         router.get(
             overviewIndex.url(),
-            { start_date: start, end_date: end },
+            { start_date: start, end_date: end, basis },
+            { preserveState: true },
+        );
+    }
+
+    function handleBasisChange(next: 'kpi' | 'actual') {
+        if (next === basis) {
+            return;
+        }
+
+        router.get(
+            overviewIndex.url(),
+            { start_date: startDate, end_date: endDate, basis: next },
             { preserveState: true },
         );
     }
 
     function openTeam(slug: string) {
-        // Carry the current range into the team's dashboard.
+        // Carry the current range and basis into the team's dashboard.
         router.get(analyticsIndex.url(slug), {
             start_date: startDate,
             end_date: endDate,
+            basis,
         });
     }
 
@@ -129,11 +158,19 @@ export default function Overview({
                             in.
                         </p>
                     </div>
-                    <DateRangePicker
-                        startDate={startDate}
-                        endDate={endDate}
-                        onRangeChange={handleRangeChange}
-                    />
+                    <div className="flex items-center gap-2">
+                        <BasisToggle
+                            basis={basis}
+                            actualAvailable={actualAvailable}
+                            coveredRange={coveredRange}
+                            onChange={handleBasisChange}
+                        />
+                        <DateRangePicker
+                            startDate={startDate}
+                            endDate={endDate}
+                            onRangeChange={handleRangeChange}
+                        />
+                    </div>
                 </div>
 
                 {/* Company scorecard. Net rolls up only configured teams. */}
@@ -184,6 +221,15 @@ export default function Overview({
                                 </TableHead>
                                 <TableHead className="text-right">
                                     Net
+                                </TableHead>
+                                <TableHead className="text-right">
+                                    Avg/Truck
+                                </TableHead>
+                                <TableHead className="text-right">
+                                    Net/Truck
+                                </TableHead>
+                                <TableHead className="text-right">
+                                    Margin
                                 </TableHead>
                                 <TableHead className="text-right">
                                     RPM
@@ -252,6 +298,43 @@ export default function Overview({
                                                 )}
                                             >
                                                 {fmtCurrency(team.net)}
+                                            </span>
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="text-right tabular-nums">
+                                        {fmtCurrency(team.avg_per_truck)}
+                                    </TableCell>
+                                    <TableCell className="text-right tabular-nums">
+                                        {team.net_per_truck === null ? (
+                                            <span className="text-xs text-muted-foreground">
+                                                —
+                                            </span>
+                                        ) : (
+                                            <span
+                                                className={cn(
+                                                    team.net_per_truck >= 0
+                                                        ? 'text-emerald-500'
+                                                        : 'text-red-500',
+                                                )}
+                                            >
+                                                {fmtCurrency(team.net_per_truck)}
+                                            </span>
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="text-right tabular-nums">
+                                        {team.margin === null ? (
+                                            <span className="text-xs text-muted-foreground">
+                                                —
+                                            </span>
+                                        ) : (
+                                            <span
+                                                className={cn(
+                                                    team.margin >= 0
+                                                        ? 'text-emerald-500'
+                                                        : 'text-red-500',
+                                                )}
+                                            >
+                                                {team.margin.toFixed(1)}%
                                             </span>
                                         )}
                                     </TableCell>

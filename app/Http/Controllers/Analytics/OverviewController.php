@@ -6,6 +6,7 @@ use App\Enums\TeamDataSource;
 use App\Http\Controllers\Controller;
 use App\Models\Team;
 use App\Services\AnalyticsService;
+use App\Services\ExpenseActualsLookup;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\RedirectResponse;
@@ -59,8 +60,17 @@ class OverviewController extends Controller
             $endDate = $startDate->copy()->addDays($maxRangeDays);
         }
 
+        // Actual basis (real per-unit expenses) is honoured only when the whole
+        // window has ledger coverage — same rule as the team dashboard. Coverage
+        // is fleet-wide (expense_actuals is keyed by unit, not team).
+        $coveredWeeks = ExpenseActualsLookup::coveredWeeks();
+        $actualAvailable = $coveredWeeks !== null
+            && $startDate->copy()->startOfWeek()->toDateString() >= $coveredWeeks[0]
+            && $endDate->copy()->startOfWeek()->toDateString() <= $coveredWeeks[1];
+        $basis = ($request->string('basis')->toString() === 'actual' && $actualAvailable) ? 'actual' : 'kpi';
+
         $teamCards = $teams
-            ->map(fn (Team $team) => $this->summarize($team, $startDate, $endDate))
+            ->map(fn (Team $team) => $this->summarize($team, $startDate, $endDate, $basis))
             ->values();
 
         // Net only rolls up teams that are fully configured; a partially- or
@@ -79,6 +89,9 @@ class OverviewController extends Controller
         return Inertia::render('overview', [
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
+            'basis' => $basis,
+            'actualAvailable' => $actualAvailable,
+            'coveredRange' => $coveredWeeks,
             'company' => [
                 'teams' => $teamCards->count(),
                 'gross' => round((float) $teamCards->sum('gross'), 2),
@@ -99,15 +112,23 @@ class OverviewController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function summarize(Team $team, Carbon|CarbonImmutable $start, Carbon|CarbonImmutable $end): array
+    private function summarize(Team $team, Carbon|CarbonImmutable $start, Carbon|CarbonImmutable $end, string $basis = 'kpi'): array
     {
-        $rows = $this->analytics->weeklyReport($team, $start, $end)
+        $rows = $this->analytics->weeklyReport($team, $start, $end, $basis)
             ->where('is_total', false);
         $keyMetrics = $this->analytics->weeklyKeyMetrics($team, $start, $end);
 
         $configured = $rows->where('missing_config', false);
         $gross = (float) $rows->sum('total_gross');
         $miles = (float) $rows->sum('total_miles');
+
+        // Trucks are counted the way drivers are: one row = one truck, and a
+        // team (two drivers sharing a unit) is already a single row. So gross
+        // spreads over every truck; net over the configured trucks that produced
+        // it. Margin is net as a share of gross (basis-dependent via net).
+        $trucks = (int) ($keyMetrics['drivers']['total'] ?? 0);
+        $configuredTrucks = $configured->count();
+        $net = $configured->isEmpty() ? null : round((float) $configured->sum('profit_loss'), 2);
 
         // XLSX teams are only as current as their last upload; analytics-DB
         // teams stream live from the TMS, so there is no "through" date.
@@ -122,11 +143,18 @@ class OverviewController extends Controller
             'gross' => round($gross, 2),
             'miles' => round($miles, 2),
             'rpm' => $miles > 0 ? round($gross / $miles, 2) : 0.0,
-            'drivers' => (int) ($keyMetrics['drivers']['total'] ?? 0),
-            'configured_drivers' => $configured->count(),
+            'drivers' => $trucks,
+            'configured_drivers' => $configuredTrucks,
             'unconfigured_drivers' => $rows->where('missing_config', true)->count(),
             // Net is only meaningful when at least one driver is configured.
-            'net' => $configured->isEmpty() ? null : round((float) $configured->sum('profit_loss'), 2),
+            'net' => $net,
+            'avg_per_truck' => $trucks > 0 ? round($gross / $trucks, 2) : 0.0,
+            'net_per_truck' => ($net !== null && $configuredTrucks > 0)
+                ? round($net / $configuredTrucks, 2)
+                : null,
+            'margin' => ($net !== null && $gross != 0.0)
+                ? round($net / $gross * 100, 1)
+                : null,
             'utilization' => (float) ($keyMetrics['compound_utilization_rate'] ?? 0.0),
             'data_through' => $lastUpload ? (string) $lastUpload : null,
             'is_live' => $team->data_source === TeamDataSource::AnalyticsDb,
