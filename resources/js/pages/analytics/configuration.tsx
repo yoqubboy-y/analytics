@@ -2,19 +2,27 @@ import { Head, router, usePage } from '@inertiajs/react';
 import { ReceiptText } from 'lucide-react';
 import { useId, useMemo, useState } from 'react';
 import {
+    destroyDriverConfigAssignment,
     destroyDriverConfigRate,
     destroyExpense,
     destroyExpenseRate,
     index as configurationIndex,
     storeDriverConfig,
+    storeDriverConfigAssignment,
     storeDriverConfigRate,
     storeExpense,
     storeExpenseRate,
     updateDriverConfig,
+    updateDriverConfigAssignment,
     updateDriverConfigRate,
     updateExpense,
     updateExpenseRate,
 } from '@/actions/App/Http/Controllers/Analytics/ConfigurationController';
+import { AssignmentHistoryDialog } from '@/components/analytics/assignment-history-dialog';
+import type {
+    AssignmentKind,
+    AssignmentRow,
+} from '@/components/analytics/assignment-history-dialog';
 import { RateHistoryDialog } from '@/components/analytics/rate-history-dialog';
 import type { RateRow } from '@/components/analytics/rate-history-dialog';
 import { Button } from '@/components/ui/button';
@@ -82,6 +90,7 @@ type DriverConfig = {
     contract_type: string;
     current_rate: number | null;
     rates: DriverConfigRate[];
+    assignments: AssignmentRow[];
 };
 
 type ImportedDriver = {
@@ -454,6 +463,63 @@ export default function Configuration({
         rateTarget?.kind === 'expense'
             ? (expenses.find((e) => e.id === rateTarget.id) ?? null)
             : null;
+
+    // --- Truck/trailer/dispatcher assignment history dialog ---
+    const [assignTargetId, setAssignTargetId] = useState<number | null>(null);
+    const assignDriver =
+        assignTargetId != null
+            ? (driverConfigs.find((dc) => dc.id === assignTargetId) ?? null)
+            : null;
+
+    function addAssignment(
+        driverId: number,
+        kind: AssignmentKind,
+        value: string,
+        effectiveFrom: string,
+        effectiveTo: string | null,
+    ) {
+        router[storeDriverConfigAssignment([slug, driverId]).method](
+            storeDriverConfigAssignment.url([slug, driverId]),
+            {
+                kind,
+                value,
+                effective_from: effectiveFrom,
+                effective_to: effectiveTo,
+            },
+            RATE_VISIT_OPTIONS,
+        );
+    }
+
+    function updateAssignment(
+        driverId: number,
+        assignmentId: number,
+        kind: AssignmentKind,
+        value: string,
+        effectiveFrom: string,
+        effectiveTo: string | null,
+    ) {
+        router[
+            updateDriverConfigAssignment([slug, driverId, assignmentId]).method
+        ](
+            updateDriverConfigAssignment.url([slug, driverId, assignmentId]),
+            {
+                kind,
+                value,
+                effective_from: effectiveFrom,
+                effective_to: effectiveTo,
+            },
+            RATE_VISIT_OPTIONS,
+        );
+    }
+
+    function deleteAssignment(driverId: number, assignmentId: number) {
+        router[
+            destroyDriverConfigAssignment([slug, driverId, assignmentId]).method
+        ](
+            destroyDriverConfigAssignment.url([slug, driverId, assignmentId]),
+            RATE_VISIT_OPTIONS,
+        );
+    }
 
     function addDriverRate(
         driverId: number,
@@ -1034,6 +1100,17 @@ export default function Configuration({
                                                                 }
                                                             >
                                                                 Rates
+                                                            </Button>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={() =>
+                                                                    setAssignTargetId(
+                                                                        dc.id,
+                                                                    )
+                                                                }
+                                                            >
+                                                                Units
                                                             </Button>
                                                             <Button
                                                                 size="sm"
@@ -1830,6 +1907,29 @@ export default function Configuration({
                         updateDriverRate(activeDriver.id, id, rate, eff, to)
                     }
                     onDelete={(id) => deleteDriverRate(activeDriver.id, id)}
+                />
+            )}
+
+            {assignDriver && (
+                <AssignmentHistoryDialog
+                    open
+                    onOpenChange={(open) => !open && setAssignTargetId(null)}
+                    title={`${assignDriver.driver_name} — truck / trailer / dispatcher`}
+                    assignments={assignDriver.assignments}
+                    onAdd={(kind, value, eff, to) =>
+                        addAssignment(assignDriver.id, kind, value, eff, to)
+                    }
+                    onUpdate={(id, kind, value, eff, to) =>
+                        updateAssignment(
+                            assignDriver.id,
+                            id,
+                            kind,
+                            value,
+                            eff,
+                            to,
+                        )
+                    }
+                    onDelete={(id) => deleteAssignment(assignDriver.id, id)}
                 />
             )}
 

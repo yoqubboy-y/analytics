@@ -45,6 +45,10 @@ Route::prefix('{current_team}')
             Route::patch('configuration/driver-configs/{driverConfig}/rates/{driverConfigRate}', [ConfigurationController::class, 'updateDriverConfigRate'])->name('configuration.driver-configs.rates.update');
             Route::delete('configuration/driver-configs/{driverConfig}/rates/{driverConfigRate}', [ConfigurationController::class, 'destroyDriverConfigRate'])->name('configuration.driver-configs.rates.destroy');
 
+            Route::post('configuration/driver-configs/{driverConfig}/assignments', [ConfigurationController::class, 'storeDriverConfigAssignment'])->name('configuration.driver-configs.assignments.store');
+            Route::patch('configuration/driver-configs/{driverConfig}/assignments/{assignment}', [ConfigurationController::class, 'updateDriverConfigAssignment'])->name('configuration.driver-configs.assignments.update');
+            Route::delete('configuration/driver-configs/{driverConfig}/assignments/{assignment}', [ConfigurationController::class, 'destroyDriverConfigAssignment'])->name('configuration.driver-configs.assignments.destroy');
+
             Route::post('configuration/expenses', [ConfigurationController::class, 'storeExpense'])->name('configuration.expenses.store');
             Route::patch('configuration/expenses/{teamExpense}', [ConfigurationController::class, 'updateExpense'])->name('configuration.expenses.update');
             Route::delete('configuration/expenses/{teamExpense}', [ConfigurationController::class, 'destroyExpense'])->name('configuration.expenses.destroy');

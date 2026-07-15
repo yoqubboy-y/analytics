@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers\Analytics;
 
+use App\Enums\DriverAssignmentKind;
 use App\Enums\DriverContractType;
 use App\Enums\ExpenseCalculationType;
 use App\Enums\TeamDataSource;
 use App\Enums\TeamPermission;
 use App\Http\Controllers\Controller;
 use App\Models\DriverConfig;
+use App\Models\DriverConfigAssignment;
 use App\Models\DriverConfigRate;
 use App\Models\Team;
 use App\Models\TeamExpense;
@@ -71,7 +73,7 @@ class ConfigurationController extends Controller
             'canChangeDataSource' => $user?->hasTeamPermission($currentTeam, TeamPermission::UpdateTeam) ?? false,
             'importSummary' => $importSummary,
             'importedDrivers' => $importedDrivers,
-            'driverConfigs' => $currentTeam->driverConfigs->load('rates')
+            'driverConfigs' => $currentTeam->driverConfigs->load('rates', 'assignments')
                 ->map(fn (DriverConfig $dc) => [
                     'id' => $dc->id,
                     'external_driver_id' => $dc->external_driver_id,
@@ -86,6 +88,14 @@ class ConfigurationController extends Controller
                             'tariff_rate' => $r->tariff_rate,
                             'effective_from' => $r->effective_from->toDateString(),
                             'effective_to' => $r->effective_to?->toDateString(),
+                        ])->all(),
+                    'assignments' => $dc->assignments->sortByDesc('effective_from')->values()
+                        ->map(fn (DriverConfigAssignment $a) => [
+                            'id' => $a->id,
+                            'kind' => $a->kind->value,
+                            'value' => $a->value,
+                            'effective_from' => $a->effective_from->toDateString(),
+                            'effective_to' => $a->effective_to?->toDateString(),
                         ])->all(),
                 ])->values(),
             'expenses' => $currentTeam->expenses->load('rates')
@@ -233,6 +243,70 @@ class ConfigurationController extends Controller
         $driverConfigRate->delete();
 
         return back();
+    }
+
+    public function storeDriverConfigAssignment(Request $request, Team $currentTeam, DriverConfig $driverConfig): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($driverConfig->team_id, $currentTeam);
+
+        $data = $this->validateAssignment($request);
+
+        // One assignment per (kind, effective date): re-entering the same start
+        // week replaces it rather than stacking a duplicate.
+        $existing = $driverConfig->assignments()
+            ->where('kind', $data['kind'])
+            ->whereDate('effective_from', $data['effective_from'])
+            ->first();
+
+        if ($existing) {
+            $existing->update([
+                'value' => $data['value'],
+                'effective_to' => $data['effective_to'] ?? null,
+            ]);
+        } else {
+            $driverConfig->assignments()->create($data);
+        }
+
+        return back();
+    }
+
+    public function updateDriverConfigAssignment(Request $request, Team $currentTeam, DriverConfig $driverConfig, DriverConfigAssignment $assignment): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($driverConfig->team_id, $currentTeam);
+        $this->ensureRateBelongsToParent($assignment->driver_config_id, $driverConfig->id);
+
+        $assignment->update($this->validateAssignment($request));
+
+        return back();
+    }
+
+    public function destroyDriverConfigAssignment(Team $currentTeam, DriverConfig $driverConfig, DriverConfigAssignment $assignment): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($driverConfig->team_id, $currentTeam);
+        $this->ensureRateBelongsToParent($assignment->driver_config_id, $driverConfig->id);
+
+        // Unlike tariff rates, an assignment history may legitimately be empty.
+        $assignment->delete();
+
+        return back();
+    }
+
+    /**
+     * @return array{kind: string, value: string, effective_from: string, effective_to: ?string}
+     */
+    private function validateAssignment(Request $request): array
+    {
+        $data = $request->validate([
+            'kind' => ['required', Rule::enum(DriverAssignmentKind::class)],
+            'value' => ['required', 'string', 'max:255'],
+            'effective_from' => ['required', 'date'],
+            'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
+        ]);
+
+        $data['value'] = trim($data['value']);
+        $data['effective_to'] = $data['effective_to'] ?? null;
+
+        return $data;
     }
 
     public function storeExpense(Request $request, Team $currentTeam): RedirectResponse

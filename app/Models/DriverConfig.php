@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\DriverAssignmentKind;
 use App\Enums\DriverContractType;
 use Carbon\CarbonInterface;
 use Database\Factories\DriverConfigFactory;
@@ -90,6 +91,48 @@ class DriverConfig extends Model
     public function currentRate(): ?float
     {
         return $this->rates->sortBy('effective_from')->last()?->tariff_rate;
+    }
+
+    /**
+     * Get this config's time-versioned truck / trailer / dispatcher
+     * assignments, oldest effective date first.
+     *
+     * @return HasMany<DriverConfigAssignment, $this>
+     */
+    public function assignments(): HasMany
+    {
+        return $this->hasMany(DriverConfigAssignment::class)->orderBy('effective_from');
+    }
+
+    /**
+     * Resolve the assignment value (truck/trailer number or dispatcher name)
+     * of the given kind in force as of a date. Same resolution as
+     * {@see tariffRateAsOf()}: a row applies within [effective_from,
+     * effective_to] (null effective_to is open-ended); the most recent
+     * effective_from wins; dates before the first fall back to the earliest;
+     * dates past a bounded end with no successor resolve to null.
+     */
+    public function assignmentAsOf(DriverAssignmentKind $kind, CarbonInterface $date): ?string
+    {
+        $ofKind = $this->assignments
+            ->where('kind', $kind)
+            ->sortBy('effective_from');
+
+        $covering = $ofKind
+            ->filter(fn (DriverConfigAssignment $a) => $a->effective_from->lessThanOrEqualTo($date)
+                && ($a->effective_to === null || $a->effective_to->greaterThanOrEqualTo($date)))
+            ->sortByDesc('effective_from')
+            ->first();
+
+        if ($covering) {
+            return $covering->value;
+        }
+
+        $earliest = $ofKind->first();
+
+        return $earliest && $date->lessThan($earliest->effective_from)
+            ? $earliest->value
+            : null;
     }
 
     /**
