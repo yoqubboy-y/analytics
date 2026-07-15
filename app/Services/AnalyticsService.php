@@ -1264,7 +1264,7 @@ class AnalyticsService
 
         $windowWeeks = $this->windowWeeks($startDate, $endDate);
 
-        $driverRows = $grouped->map(function (Collection $group, string $driverKey) use ($driverConfigs, $expenses, $windowWeeks, $basis, $actuals) {
+        $driverRows = $grouped->map(function (Collection $group, string $driverKey) use ($driverConfigs, $expenses, $windowWeeks, $basis, $actuals, $endDate) {
             $first = $group->first();
             $gross = (float) $group->sum('gross');
             $miles = (float) $group->sum('miles');
@@ -1289,6 +1289,15 @@ class AnalyticsService
             $rpm = $miles > 0 ? round($gross / $miles, 2) : 0.0;
             $driverConfig = $driverConfigs->get($driverKey);
 
+            // Some imported sheets omit the unit, leaving the day-rows' truck
+            // blank; the truck then lives only in the driver's time-versioned
+            // assignment. Fall back to that assignment (as of the window end) so
+            // the board shows the unit instead of a dash. Display-only — the
+            // per-week P&L/actuals already resolve the truck from the assignment.
+            $displayTruck = filled($first->truck_number)
+                ? $first->truck_number
+                : ($driverConfig?->assignmentAsOf(DriverAssignmentKind::Truck, $endDate) ?? $first->truck_number);
+
             // Build per-(driver, ISO week) buckets so salary & expenses use
             // each week's own gross/miles/tariff (matching the analytics-DB
             // path's `fetchWeeklyData` shape).
@@ -1310,7 +1319,7 @@ class AnalyticsService
                     'external_driver_key' => $driverKey,
                     'driver_name' => $first->driver_name,
                     'dispatcher' => $driverConfig?->dispatcher ?? $first->dispatcher,
-                    'truck_number' => $first->truck_number,
+                    'truck_number' => $displayTruck,
                     'type' => $driverConfig?->contract_type->label(),
                     'days' => $days,
                     'productive_event_days' => $productiveEventDays,
@@ -1342,7 +1351,7 @@ class AnalyticsService
                 'external_driver_key' => $driverKey,
                 'driver_name' => $first->driver_name,
                 'dispatcher' => $driverConfig->dispatcher ?? $first->dispatcher,
-                'truck_number' => $first->truck_number,
+                'truck_number' => $displayTruck,
                 'type' => $driverConfig->contract_type->label(),
                 'days' => $days,
                 'productive_event_days' => $productiveEventDays,

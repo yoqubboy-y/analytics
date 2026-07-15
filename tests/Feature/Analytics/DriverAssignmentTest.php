@@ -1,9 +1,13 @@
 <?php
 
 use App\Enums\DriverAssignmentKind;
+use App\Enums\DriverContractType;
+use App\Enums\TeamDataSource;
 use App\Models\DriverConfig;
 use App\Models\Team;
 use App\Models\User;
+use App\Models\XlsxDriverDay;
+use App\Services\AnalyticsService;
 use Carbon\CarbonImmutable;
 
 function assignTruck(DriverConfig $config, string $value, string $from, ?string $to = null): void
@@ -83,4 +87,38 @@ test('an assignment can be added, replaced on the same start date, and deleted',
         ->delete("/{$team->slug}/configuration/driver-configs/{$config->id}/assignments/{$assignment->id}")
         ->assertRedirect();
     expect($config->assignments()->count())->toBe(0);
+});
+
+test('the xlsx board shows the truck assignment when imported day-rows have no unit', function () {
+    $team = Team::factory()->create(['data_source' => TeamDataSource::Xlsx]);
+    // Name-only key (empty truck) — this is how configs attach to truck-less day-rows.
+    $config = DriverConfig::factory()->for($team)->create([
+        'contract_type' => DriverContractType::CompanyCpm,
+        'external_driver_key' => 'test driver|',
+    ]);
+    $config->rates()->create(['tariff_rate' => 0.65, 'effective_from' => '2026-07-06']);
+    assignTruck($config, 'GL2555', '2026-07-06');
+
+    // The imported sheet omitted the unit, so the day-row's truck is blank.
+    XlsxDriverDay::create([
+        'team_id' => $team->id,
+        'work_date' => '2026-07-06',
+        'driver_name' => 'Test Driver',
+        'truck_number' => '',
+        'gross' => 5000,
+        'miles' => 1000,
+        'source_format' => 'test',
+    ]);
+
+    $rows = app(AnalyticsService::class)->weeklyReport(
+        $team,
+        CarbonImmutable::parse('2026-07-06'),
+        CarbonImmutable::parse('2026-07-12'),
+        'kpi',
+    );
+    $row = $rows->firstWhere('driver_name', 'Test Driver');
+
+    expect($row)->not->toBeNull()
+        ->and($row['missing_config'])->toBeFalse()
+        ->and($row['truck_number'])->toBe('GL2555'); // filled from the assignment, not the blank day-row
 });
