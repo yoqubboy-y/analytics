@@ -2,6 +2,7 @@
 
 use App\Enums\TeamRole;
 use App\Models\DashboardShare;
+use App\Models\ExpenseActual;
 use App\Models\Team;
 use App\Services\AnalyticsService;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -154,6 +155,62 @@ test('the public share page receives its widget scope', function () {
         ->get(route('shared.show', $share))
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page->where('widgets', ['pnl_table']));
+});
+
+test('a share captures the actual basis when the window has ledger coverage', function () {
+    [$user, $team] = createTeamMember(TeamRole::Member);
+    ExpenseActual::create(['source' => 'fuel', 'unit' => 'GL1', 'week_start' => '2026-07-06', 'amount' => 10]);
+
+    $this
+        ->actingAs($user)
+        ->post(route('shares.store', $team), [
+            'start_date' => '2026-07-06',
+            'end_date' => '2026-07-12',
+            'basis' => 'actual',
+        ])
+        ->assertRedirect();
+
+    expect($team->dashboardShares()->firstOrFail()->basis)->toBe('actual');
+});
+
+test('a share requesting actual falls back to kpi when the window is uncovered', function () {
+    [$user, $team] = createTeamMember(TeamRole::Member);
+
+    $this
+        ->actingAs($user)
+        ->post(route('shares.store', $team), [
+            'start_date' => '2026-05-04',
+            'end_date' => '2026-05-10',
+            'basis' => 'actual',
+        ])
+        ->assertRedirect();
+
+    expect($team->dashboardShares()->firstOrFail()->basis)->toBe('kpi');
+});
+
+test('the public share page renders on its stored basis', function () {
+    ExpenseActual::create(['source' => 'fuel', 'unit' => 'GL1', 'week_start' => '2026-07-06', 'amount' => 10]);
+
+    $this->mock(AnalyticsService::class, function ($mock) {
+        $mock->shouldReceive('weeklyReport')->andReturn(collect([]));
+        $mock->shouldReceive('splitByDispatcher')->andReturn(collect([]));
+        $mock->shouldReceive('weeklyKeyMetrics')->andReturn([
+            'drivers' => ['total' => 0],
+            'compound_utilization_rate' => 0.0,
+            'event_breakdown' => [],
+        ]);
+    });
+
+    $share = DashboardShare::factory()->create([
+        'basis' => 'actual',
+        'start_date' => '2026-07-06',
+        'end_date' => '2026-07-12',
+    ]);
+
+    $this
+        ->get(route('shared.show', $share))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page->where('basis', 'actual'));
 });
 
 test('a revoked share link returns 404', function () {

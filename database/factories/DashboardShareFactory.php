@@ -24,6 +24,7 @@ class DashboardShareFactory extends Factory
             'token' => Str::random(40),
             'start_date' => now()->startOfWeek()->toDateString(),
             'end_date' => now()->endOfWeek()->toDateString(),
+            'basis' => 'kpi',
             'created_by' => null,
             'expires_at' => null,
             'revoked_at' => null,

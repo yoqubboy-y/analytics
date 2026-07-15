@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\DashboardShare;
 use App\Models\Team;
 use App\Services\AnalyticsService;
+use App\Services\ExpenseActualsLookup;
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -26,6 +28,7 @@ class DashboardShareController extends Controller
         $data = $request->validate([
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date'],
+            'basis' => ['nullable', Rule::in(['kpi', 'actual'])],
             'expires_at' => ['nullable', 'date', 'after:now'],
             'widgets' => ['nullable', 'array'],
             'widgets.*' => ['string', Rule::in(DashboardShare::WIDGETS)],
@@ -47,6 +50,9 @@ class DashboardShareController extends Controller
             'token' => Str::random(40),
             'start_date' => $start->toDateString(),
             'end_date' => $end->toDateString(),
+            // Persist the basis the sharer was viewing, but only honour "actual"
+            // when the window has ledger coverage (same rule as the dashboard).
+            'basis' => $this->resolveBasis($data['basis'] ?? 'kpi', $start, $end),
             'widgets' => $this->normalizeWidgets($data['widgets'] ?? []),
             'created_by' => $request->user()->id,
             'expires_at' => $data['expires_at'] ?? null,
@@ -84,8 +90,18 @@ class DashboardShareController extends Controller
         $startDate = $share->start_date;
         $endDate = $share->end_date;
 
-        $rows = $this->analytics->weeklyReport($team, $startDate, $endDate);
-        $dispatcherRows = $this->analytics->splitByDispatcher($team, $rows, $startDate, $endDate);
+        // Reproduce the basis the share was created on, re-gated on coverage in
+        // case the ledger window changed since it was shared.
+        $basis = $this->resolveBasis($share->basis ?? 'kpi', $startDate, $endDate);
+
+        $rows = $this->analytics->weeklyReport($team, $startDate, $endDate, $basis);
+
+        // Dispatcher widgets are always KPI (fair comparison); feed them a KPI
+        // row set, never the actual-basis rows.
+        $kpiRows = $basis === 'actual'
+            ? $this->analytics->weeklyReport($team, $startDate, $endDate, 'kpi')
+            : $rows;
+        $dispatcherRows = $this->analytics->splitByDispatcher($team, $kpiRows, $startDate, $endDate);
         $keyMetrics = $this->analytics->weeklyKeyMetrics($team, $startDate, $endDate);
 
         return Inertia::render('shared/dashboard', [
@@ -93,15 +109,41 @@ class DashboardShareController extends Controller
             'rows' => $rows->values(),
             'dispatcherRows' => $dispatcherRows->values(),
             'keyMetrics' => $keyMetrics,
-            'expenses' => $team->expenses->map(fn ($e) => [
-                'id' => $e->id,
-                'name' => $e->name,
-                'calculation_type' => $e->calculation_type->value,
-            ])->values(),
+            // Only the columns belonging to this basis, matching the computed rows.
+            'expenses' => $team->expenses
+                ->filter(fn ($e) => $basis === 'actual'
+                    ? ($e->actual_source !== null || $e->applies_to_actual)
+                    : $e->applies_to_kpi)
+                ->map(fn ($e) => [
+                    'id' => $e->id,
+                    'name' => $e->name,
+                    'description' => $e->description,
+                    'calculation_type' => $e->calculation_type->value,
+                ])->values(),
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
+            'basis' => $basis,
             'widgets' => $share->widgets,
         ]);
+    }
+
+    /**
+     * Honour "actual" only when every week in the window has ledger coverage;
+     * otherwise fall back to "kpi" (same rule as the analytics dashboard).
+     */
+    private function resolveBasis(string $requested, CarbonInterface $start, CarbonInterface $end): string
+    {
+        if ($requested !== 'actual') {
+            return 'kpi';
+        }
+
+        $covered = ExpenseActualsLookup::coveredWeeks();
+
+        $available = $covered !== null
+            && $start->copy()->startOfWeek()->toDateString() >= $covered[0]
+            && $end->copy()->startOfWeek()->toDateString() <= $covered[1];
+
+        return $available ? 'actual' : 'kpi';
     }
 
     /**

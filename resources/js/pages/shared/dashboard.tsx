@@ -16,6 +16,8 @@ type Props = {
     expenses: Expense[];
     startDate: string;
     endDate: string;
+    /** Which expense basis the figures were computed on. */
+    basis: 'kpi' | 'actual';
     keyMetrics: KeyMetricsData;
     /** Widget keys to show; null = the whole dashboard. */
     widgets: string[] | null;
@@ -28,6 +30,7 @@ export default function SharedDashboard({
     expenses,
     startDate,
     endDate,
+    basis,
     keyMetrics,
     widgets,
 }: Props) {
@@ -73,7 +76,8 @@ export default function SharedDashboard({
                                 {teamName}
                             </h1>
                             <p className="text-sm text-muted-foreground">
-                                {period}
+                                {period} · {basis === 'actual' ? 'Actual' : 'KPI'}{' '}
+                                figures
                             </p>
                         </div>
                         <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">

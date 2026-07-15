@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'token',
     'start_date',
     'end_date',
+    'basis',
     'widgets',
     'created_by',
     'expires_at',

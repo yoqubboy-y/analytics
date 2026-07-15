@@ -246,6 +246,7 @@ export default function AnalyticsDashboard({
                         slug={slug}
                         startDate={startDate}
                         endDate={endDate}
+                        basis={basis}
                         shares={shares}
                     />
 

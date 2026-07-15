@@ -33,6 +33,8 @@ interface ShareDashboardModalProps {
     slug: string;
     startDate: string;
     endDate: string;
+    /** The basis the dashboard is currently on; the share reproduces it. */
+    basis: 'kpi' | 'actual';
     shares: DashboardShareItem[];
 }
 
@@ -47,6 +49,7 @@ export function ShareDashboardModal({
     slug,
     startDate,
     endDate,
+    basis,
     shares,
 }: ShareDashboardModalProps) {
     const [copied, setCopied] = useState<string | null>(null);
@@ -70,6 +73,7 @@ export function ShareDashboardModal({
             {
                 start_date: startDate,
                 end_date: endDate,
+                basis,
                 widgets: selectedWidgets,
             },
             VISIT,
@@ -111,6 +115,12 @@ export function ShareDashboardModal({
                             <div className="font-medium">Current period</div>
                             <div className="text-muted-foreground">
                                 {fmtRange(startDate, endDate)}
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                                Basis:{' '}
+                                <span className="font-medium text-foreground">
+                                    {basis === 'actual' ? 'Actual' : 'KPI'}
+                                </span>
                             </div>
                         </div>
                         <Button
