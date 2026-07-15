@@ -43,6 +43,8 @@ test('a multi-team user sees the company overview with rolled-up gross', functio
             ->where('company.gross', 1500)
             // No configs on either team → net can't be computed for the company.
             ->where('company.net', null)
+            // Both teams ran 1 productive day in a 7-day window → ~14.3%.
+            ->where('company.utilization', fn ($v) => (float) $v > 0)
             ->has('teams', 2));
 });
 

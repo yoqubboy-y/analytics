@@ -67,6 +67,15 @@ class OverviewController extends Controller
         // un-configured team (gross-only) must not pretend to contribute net.
         $netContributors = $teamCards->where('net', '!==', null);
 
+        // Fleet-wide utilization is driver-weighted, not a flat average of the
+        // per-team rates — a 2-driver team shouldn't swing it like a 100-driver
+        // one. Window length is common to all teams, so weighting by driver
+        // count is equivalent to (Σ productive days / Σ capacity).
+        $totalDrivers = (int) $teamCards->sum('drivers');
+        $utilization = $totalDrivers > 0
+            ? round($teamCards->sum(fn (array $c) => $c['utilization'] * $c['drivers']) / $totalDrivers, 1)
+            : 0.0;
+
         return Inertia::render('overview', [
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
@@ -74,9 +83,10 @@ class OverviewController extends Controller
                 'teams' => $teamCards->count(),
                 'gross' => round((float) $teamCards->sum('gross'), 2),
                 'miles' => round((float) $teamCards->sum('miles'), 2),
-                'drivers' => (int) $teamCards->sum('drivers'),
+                'drivers' => $totalDrivers,
                 'net' => $netContributors->isEmpty() ? null : round((float) $netContributors->sum('net'), 2),
                 'net_partial' => $netContributors->count() < $teamCards->count(),
+                'utilization' => $utilization,
             ],
             'teams' => $teamCards,
         ]);
@@ -99,6 +109,12 @@ class OverviewController extends Controller
         $gross = (float) $rows->sum('total_gross');
         $miles = (float) $rows->sum('total_miles');
 
+        // XLSX teams are only as current as their last upload; analytics-DB
+        // teams stream live from the TMS, so there is no "through" date.
+        $lastUpload = $team->data_source === TeamDataSource::Xlsx
+            ? $team->xlsxDriverDays()->max('work_date')
+            : null;
+
         return [
             'slug' => $team->slug,
             'name' => $team->name,
@@ -112,13 +128,7 @@ class OverviewController extends Controller
             // Net is only meaningful when at least one driver is configured.
             'net' => $configured->isEmpty() ? null : round((float) $configured->sum('profit_loss'), 2),
             'utilization' => (float) ($keyMetrics['compound_utilization_rate'] ?? 0.0),
-            // XLSX teams are only as current as their last upload; analytics-DB
-            // teams stream live from the TMS, so there is no "through" date.
-            'data_through' => $team->data_source === TeamDataSource::Xlsx
-                ? optional($team->xlsxDriverDays()->max('work_date'))
-                    ? (string) $team->xlsxDriverDays()->max('work_date')
-                    : null
-                : null,
+            'data_through' => $lastUpload ? (string) $lastUpload : null,
             'is_live' => $team->data_source === TeamDataSource::AnalyticsDb,
         ];
     }

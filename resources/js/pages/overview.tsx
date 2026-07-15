@@ -39,6 +39,7 @@ type Props = {
         drivers: number;
         net: number | null;
         net_partial: boolean;
+        utilization: number;
     };
     teams: TeamCard[];
 };
@@ -70,17 +71,21 @@ function Stat({
     label,
     value,
     hint,
+    valueClass,
 }: {
     label: string;
     value: string;
     hint?: string;
+    valueClass?: string;
 }) {
     return (
         <div className="flex flex-col gap-1 rounded-xl border bg-card p-4 shadow-sm">
             <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                 {label}
             </span>
-            <span className="text-2xl font-bold tabular-nums">{value}</span>
+            <span className={cn('text-2xl font-bold tabular-nums', valueClass)}>
+                {value}
+            </span>
             {hint && (
                 <span className="text-xs text-muted-foreground">{hint}</span>
             )}
@@ -132,7 +137,7 @@ export default function Overview({
                 </div>
 
                 {/* Company scorecard. Net rolls up only configured teams. */}
-                <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
                     <Stat
                         label="Total gross"
                         value={fmtCurrency(company.gross)}
@@ -147,6 +152,12 @@ export default function Overview({
                                   ? 'Configured teams only'
                                   : undefined
                         }
+                    />
+                    <Stat
+                        label="Utilization"
+                        value={`${company.utilization.toFixed(1)}%`}
+                        valueClass={utilizationTone(company.utilization)}
+                        hint="Driver-weighted"
                     />
                     <Stat
                         label="Total miles"
