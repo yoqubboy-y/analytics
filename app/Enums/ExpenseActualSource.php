@@ -16,6 +16,17 @@ enum ExpenseActualSource: string
     case Toll = 'toll';
     case Fleet = 'fleet';
 
+    public function label(): string
+    {
+        return match ($this) {
+            self::TruckPayment => 'Truck payment',
+            self::TrailerPayment => 'Trailer payment',
+            self::Fuel => 'Fuel',
+            self::Toll => 'Toll',
+            self::Fleet => 'Fleet maintenance',
+        };
+    }
+
     /**
      * Which resolved unit this source is charged against — truck-borne costs
      * use the driver's truck; the trailer payment uses their trailer. Fleet

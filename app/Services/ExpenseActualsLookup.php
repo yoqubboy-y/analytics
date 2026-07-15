@@ -18,7 +18,9 @@ use Illuminate\Support\Collection;
  */
 class ExpenseActualsLookup
 {
-    private const WEEKS_PER_MONTH = 12 / 52;
+    // Weekly slice of a monthly payment. Four weekly settlements per month, so a
+    // 4-week window sums back to exactly the monthly amount (business rule).
+    private const WEEKS_PER_MONTH = 4;
 
     /**
      * @param  array<string, array<string, list<array{from: CarbonImmutable, to: ?CarbonImmutable, monthly: float}>>>  $payments  [kind][unit] => rows
@@ -103,7 +105,7 @@ class ExpenseActualsLookup
 
         $monthly = $this->resolveEffective($rows, $week);
 
-        return $monthly === null ? null : round($monthly * self::WEEKS_PER_MONTH, 2);
+        return $monthly === null ? null : round($monthly / self::WEEKS_PER_MONTH, 2);
     }
 
     private function ledger(string $source, ?string $unit, CarbonImmutable $week): ?float

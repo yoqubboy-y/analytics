@@ -4,6 +4,7 @@ use App\Enums\DriverAssignmentKind;
 use App\Enums\DriverContractType;
 use App\Enums\ExpenseActualSource;
 use App\Enums\ExpenseCalculationType;
+use App\Enums\TeamRole;
 use App\Models\DriverConfig;
 use App\Models\EquipmentPayment;
 use App\Models\ExpenseActual;
@@ -29,7 +30,7 @@ test('truck payment converts monthly to a weekly slice', function () {
     $lookup = ExpenseActualsLookup::forWindow(CarbonImmutable::parse(WK), CarbonImmutable::parse(WK));
 
     expect($lookup->amountFor(ExpenseActualSource::TruckPayment, 'GL7005', null, CarbonImmutable::parse(WK)))
-        ->toBe(round(3322.70 * 12 / 52, 2)); // 766.78
+        ->toBe(round(3322.70 / 4, 2)); // 830.68
 });
 
 test('fuel sums the ledger for the unit+week; a missing unit is null', function () {
@@ -93,7 +94,7 @@ test('kpi basis uses the configured rate; actual basis uses the real payment', f
     $actual = $svc->computeFinancials($config, $expenses, buckets(), $windowWeeks, [WK], 'actual', 'GL7005', $lookup);
 
     expect($kpi['expenses']['Truck Payment'])->toBe(1000.0)
-        ->and($actual['expenses']['Truck Payment'])->toBe(round(3322.70 * 12 / 52, 2)) // 766.78
+        ->and($actual['expenses']['Truck Payment'])->toBe(round(3322.70 / 4, 2)) // 830.68
         ->and($actual['salary'])->toBe($kpi['salary']); // salary is basis-agnostic
 });
 
@@ -105,6 +106,27 @@ test('actual basis with no data for the unit/week charges $0', function () {
     $actual = $svc->computeFinancials($config, $expenses, buckets(), [CarbonImmutable::parse(WK)], [WK], 'actual', 'GL7005', $lookup);
 
     expect($actual['expenses']['Truck Payment'])->toBe(0.0);
+});
+
+test('an expense can be given and cleared of an actual source via the config endpoints', function () {
+    [$user, $team] = createTeamMember(TeamRole::Admin);
+
+    $this->actingAs($user)->from("/{$team->slug}/configuration")
+        ->post(route('configuration.expenses.store', $team), [
+            'name' => 'Fuel', 'calculation_type' => 'per_mile', 'actual_source' => 'fuel',
+            'rate' => 0.8, 'effective_from' => '2026-07-06',
+        ])->assertRedirect();
+
+    $expense = $team->expenses()->where('name', 'Fuel')->first();
+    expect($expense->actual_source)->toBe(ExpenseActualSource::Fuel);
+
+    // Clearing it back to null (the "None" option) is honored.
+    $this->actingAs($user)->from("/{$team->slug}/configuration")
+        ->patch(route('configuration.expenses.update', [$team, $expense]), [
+            'name' => 'Fuel', 'calculation_type' => 'per_mile', 'actual_source' => null,
+        ])->assertRedirect();
+
+    expect($expense->fresh()->actual_source)->toBeNull();
 });
 
 test('a non-sourced expense is identical across bases', function () {

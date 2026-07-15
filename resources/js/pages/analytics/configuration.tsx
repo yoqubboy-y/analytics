@@ -111,6 +111,8 @@ type TeamExpense = {
     name: string;
     description: string | null;
     calculation_type: string;
+    /** Real-data source for actual-basis reports; null = always a rate. */
+    actual_source: string | null;
     current_rate: number | null;
     rates: ExpenseRate[];
     applies_to: string[] | null;
@@ -124,6 +126,7 @@ type Props = {
     expenses: TeamExpense[];
     contractTypes: ContractType[];
     calculationTypes: CalculationType[];
+    actualSources: { value: string; label: string }[];
     importedDrivers: ImportedDriver[];
     dataSource: 'analytics_db' | 'xlsx';
     canImport: boolean;
@@ -192,6 +195,7 @@ const emptyExpense = {
     name: '',
     description: '',
     calculation_type: 'flat',
+    actual_source: 'none',
     rate: '',
     effective_from: isoMonday(),
     applies_to: [] as string[],
@@ -205,11 +209,15 @@ type RateDialogTarget = { kind: 'driver' | 'expense'; id: number };
 /** "No filter" sentinel — Select can't take an empty string as a value. */
 const ALL = 'all';
 
+/** "No actual source" sentinel for the expense Select (null on the wire). */
+const NONE = 'none';
+
 export default function Configuration({
     driverConfigs,
     expenses,
     contractTypes,
     calculationTypes,
+    actualSources,
     importedDrivers,
     dataSource,
     canImport,
@@ -401,6 +409,10 @@ export default function Configuration({
                         ? newExpense.driver_paid_contract_types
                         : null,
                 skip_when_no_gross: newExpense.skip_when_no_gross,
+                actual_source:
+                    newExpense.actual_source === NONE
+                        ? null
+                        : newExpense.actual_source,
             },
             {
                 onSuccess: () => {
@@ -437,6 +449,10 @@ export default function Configuration({
                         : null,
                 skip_when_no_gross: editingExpense.skip_when_no_gross,
                 sort_order: editingExpense.sort_order,
+                actual_source:
+                    editingExpense.actual_source === NONE
+                        ? null
+                        : editingExpense.actual_source,
             },
             { onSuccess: () => setEditingExpense(null) },
         );
@@ -1296,6 +1312,52 @@ export default function Configuration({
                                                 </Select>
                                             </div>
                                             <div className="flex flex-col gap-1">
+                                                <Label htmlFor="exp-actual-source">
+                                                    Actual source
+                                                </Label>
+                                                <Select
+                                                    value={
+                                                        newExpense.actual_source
+                                                    }
+                                                    onValueChange={(v) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            actual_source: v,
+                                                        })
+                                                    }
+                                                >
+                                                    <SelectTrigger id="exp-actual-source">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem
+                                                            value={NONE}
+                                                        >
+                                                            None (use rate)
+                                                        </SelectItem>
+                                                        {actualSources.map(
+                                                            (s) => (
+                                                                <SelectItem
+                                                                    key={
+                                                                        s.value
+                                                                    }
+                                                                    value={
+                                                                        s.value
+                                                                    }
+                                                                >
+                                                                    {s.label}
+                                                                </SelectItem>
+                                                            ),
+                                                        )}
+                                                    </SelectContent>
+                                                </Select>
+                                                <p className="text-xs text-muted-foreground">
+                                                    In "Actual" P&amp;L mode,
+                                                    pull real dollars from this
+                                                    source instead of the rate.
+                                                </p>
+                                            </div>
+                                            <div className="flex flex-col gap-1">
                                                 <Label htmlFor="exp-rate">
                                                     Rate
                                                 </Label>
@@ -1480,6 +1542,7 @@ export default function Configuration({
                                         <TableRow>
                                             <TableHead>Name</TableHead>
                                             <TableHead>Type</TableHead>
+                                            <TableHead>Actual</TableHead>
                                             <TableHead>Current Rate</TableHead>
                                             <TableHead>Applies To</TableHead>
                                             <TableHead></TableHead>
@@ -1562,6 +1625,72 @@ export default function Configuration({
                                                                     exp.calculation_type,
                                                             )?.label ??
                                                             exp.calculation_type)
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        {isEditing ? (
+                                                            <Select
+                                                                value={
+                                                                    editingExpense.actual_source ??
+                                                                    NONE
+                                                                }
+                                                                onValueChange={(
+                                                                    v,
+                                                                ) =>
+                                                                    setEditingExpense(
+                                                                        {
+                                                                            ...editingExpense,
+                                                                            actual_source:
+                                                                                v ===
+                                                                                NONE
+                                                                                    ? null
+                                                                                    : v,
+                                                                        },
+                                                                    )
+                                                                }
+                                                            >
+                                                                <SelectTrigger className="w-36">
+                                                                    <SelectValue />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    <SelectItem
+                                                                        value={
+                                                                            NONE
+                                                                        }
+                                                                    >
+                                                                        None
+                                                                    </SelectItem>
+                                                                    {actualSources.map(
+                                                                        (s) => (
+                                                                            <SelectItem
+                                                                                key={
+                                                                                    s.value
+                                                                                }
+                                                                                value={
+                                                                                    s.value
+                                                                                }
+                                                                            >
+                                                                                {
+                                                                                    s.label
+                                                                                }
+                                                                            </SelectItem>
+                                                                        ),
+                                                                    )}
+                                                                </SelectContent>
+                                                            </Select>
+                                                        ) : exp.actual_source ? (
+                                                            <span className="text-xs font-medium">
+                                                                {actualSources.find(
+                                                                    (s) =>
+                                                                        s.value ===
+                                                                        exp.actual_source,
+                                                                )?.label ??
+                                                                    exp.actual_source}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-xs text-muted-foreground">
+                                                                —
+                                                            </span>
                                                         )}
                                                     </TableCell>
                                                     <TableCell className="tabular-nums">
