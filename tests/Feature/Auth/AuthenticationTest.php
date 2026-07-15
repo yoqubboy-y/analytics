@@ -19,7 +19,9 @@ test('users can authenticate using the login screen', function () {
     ]);
 
     $this->assertAuthenticated();
-    $response->assertRedirect(route('dashboard'));
+    // Post-login lands on the company overview (which itself forwards
+    // single-team users into their team).
+    $response->assertRedirect(route('overview'));
 });
 
 test('users with two factor enabled are redirected to two factor challenge', function () {

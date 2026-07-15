@@ -7,16 +7,25 @@ use App\Http\Controllers\Analytics\AnalyticsController;
 use App\Http\Controllers\Analytics\ConfigurationController;
 use App\Http\Controllers\Analytics\DashboardShareController;
 use App\Http\Controllers\Analytics\ImportController;
+use App\Http\Controllers\Analytics\OverviewController;
 use App\Http\Controllers\Teams\AdministrationController;
 use App\Http\Controllers\Teams\TeamInvitationController;
 use App\Http\Middleware\EnsureTeamMembership;
 use App\Models\Team;
 use Illuminate\Support\Facades\Route;
+use Inertia\Inertia;
 use Laravel\Fortify\Features;
 
-Route::inertia('/', 'welcome', [
-    'canRegister' => Features::enabled(Features::registration()),
-])->name('home');
+// Signed-in users land on their company overview; guests see the marketing page.
+Route::get('/', function () {
+    if (auth()->check()) {
+        return redirect()->route('overview');
+    }
+
+    return Inertia::render('welcome', [
+        'canRegister' => Features::enabled(Features::registration()),
+    ]);
+})->name('home');
 
 // Public, read-only shared dashboard — no login, revocable, rate-limited.
 Route::get('shared/{share}', [DashboardShareController::class, 'show'])
@@ -71,6 +80,10 @@ Route::prefix('{current_team}')
 // Side-by-side comparison of two teams the user belongs to. Lives outside
 // the `{current_team}` prefix since both teams come from query params.
 Route::middleware(['auth', 'verified'])->group(function () {
+    // Company-wide roll-up across the user's teams; single-team users are
+    // redirected straight into their team by the controller.
+    Route::get('overview', [OverviewController::class, 'index'])->name('overview');
+
     Route::get('compare', [AnalyticsComparisonController::class, 'show'])->name('compare.show');
 });
 

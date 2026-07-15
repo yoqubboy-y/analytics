@@ -1,5 +1,6 @@
 import { router, usePage } from '@inertiajs/react';
-import { Check, ChevronsUpDown, Plus, Users } from 'lucide-react';
+import { Check, ChevronsUpDown, LayoutGrid, Plus, Users } from 'lucide-react';
+import { index as overviewIndex } from '@/actions/App/Http/Controllers/Analytics/OverviewController';
 import CreateTeamModal from '@/components/create-team-modal';
 import { Button } from '@/components/ui/button';
 import {
@@ -106,6 +107,25 @@ export function TeamSwitcher({ inHeader = false }: TeamSwitcherProps) {
                 align={inHeader ? 'end' : 'start'}
                 sideOffset={inHeader ? undefined : 4}
             >
+                {teams.length > 1 && (
+                    <>
+                        <DropdownMenuItem
+                            data-test="team-switcher-overview"
+                            className={
+                                inHeader
+                                    ? 'cursor-pointer gap-2'
+                                    : 'cursor-pointer gap-2 p-2'
+                            }
+                            onSelect={() => router.visit(overviewIndex.url())}
+                        >
+                            <LayoutGrid
+                                className={inHeader ? 'size-4' : 'h-4 w-4'}
+                            />
+                            All teams
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                    </>
+                )}
                 <DropdownMenuLabel className="text-xs text-muted-foreground">
                     Teams
                 </DropdownMenuLabel>
