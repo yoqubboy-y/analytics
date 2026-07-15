@@ -158,6 +158,36 @@ test('an expense with applies_to_actual=false is dropped from the actual P&L but
         ->and($actual['total_expenses'])->toBe(0.0);
 });
 
+test('an expense with applies_to_kpi=false is dropped from the KPI P&L but kept in actual', function () {
+    $team = Team::factory()->create();
+    $config = DriverConfig::factory()->for($team)->create(['contract_type' => DriverContractType::CompanyCpm]);
+    $config->rates()->create(['tariff_rate' => 0.65, 'effective_from' => WK]);
+    $config->load('rates', 'assignments');
+
+    // A flat "Trailer Averages" expense the user wants only in the factual view.
+    $avg = TeamExpense::factory()->for($team)->create([
+        'name' => 'Trailer Averages',
+        'calculation_type' => ExpenseCalculationType::Flat,
+        'actual_source' => null,
+        'applies_to_actual' => true,
+        'applies_to_kpi' => false,
+        'applies_to' => null,
+    ]);
+    $avg->rates()->create(['rate' => 363, 'effective_from' => WK]);
+    $expenses = collect([$avg->load('rates')]);
+
+    $svc = app(AnalyticsService::class);
+    $windowWeeks = [CarbonImmutable::parse(WK)];
+    $lookup = ExpenseActualsLookup::forWindow(CarbonImmutable::parse(WK), CarbonImmutable::parse(WK));
+
+    $kpi = $svc->computeFinancials($config, $expenses, buckets(), $windowWeeks, [WK], 'kpi');
+    $actual = $svc->computeFinancials($config, $expenses, buckets(), $windowWeeks, [WK], 'actual', 'GL7005', $lookup);
+
+    expect($kpi['expenses'])->not->toHaveKey('Trailer Averages')
+        ->and($kpi['total_expenses'])->toBe(0.0)
+        ->and($actual['expenses']['Trailer Averages'])->toBe(363.0);
+});
+
 test('a non-sourced expense is identical across bases', function () {
     $team = Team::factory()->create();
     $config = DriverConfig::factory()->for($team)->create(['contract_type' => DriverContractType::CompanyCpm]);

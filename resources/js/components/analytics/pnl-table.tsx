@@ -57,6 +57,11 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { downloadElementAsPng } from '@/lib/download';
 import { cn } from '@/lib/utils';
 
@@ -93,8 +98,31 @@ export type Row = {
 export type Expense = {
     id: number;
     name: string;
+    /** Optional note shown as a tooltip on the column header. */
+    description?: string | null;
     calculation_type: string;
 };
+
+// Expense column header: shows the name, plus a hover tooltip with the
+// description when one is configured (dotted underline hints it's there).
+function ExpenseHeader({
+    name,
+    description,
+}: {
+    name: string;
+    description: string;
+}) {
+    return (
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <span className="truncate underline decoration-dotted decoration-muted-foreground/60 underline-offset-2">
+                    {name}
+                </span>
+            </TooltipTrigger>
+            <TooltipContent>{description}</TooltipContent>
+        </Tooltip>
+    );
+}
 
 // Negative values get the sign outside the prefix so a driver-paid expense
 // reads "-$250.00" instead of "$-250.00".
@@ -429,7 +457,14 @@ export function PnlTable({
             ...expenses.map(
                 (e): ColumnDef<Row> => ({
                     id: `expense_${e.name}`,
-                    header: e.name,
+                    header: e.description
+                        ? () => (
+                              <ExpenseHeader
+                                  name={e.name}
+                                  description={e.description as string}
+                              />
+                          )
+                        : e.name,
                     size: 110,
                     minSize: 70,
                     accessorFn: (row) => row.expenses[e.name] ?? null,
@@ -1156,7 +1191,9 @@ function VisibilityPanel({
     const getLabel = (col: Column) =>
         typeof col.columnDef.header === 'string'
             ? col.columnDef.header
-            : col.id;
+            : col.id.startsWith('expense_')
+              ? col.id.slice('expense_'.length)
+              : col.id;
     const isVisible = (colId: string) => columnVisibility[colId] !== false;
 
     const toggleColumn = (colId: string) => {

@@ -874,12 +874,18 @@ class AnalyticsService
                 continue;
             }
 
-            // In Actual mode the P&L is the real ledger: the five actual-backed
-            // expenses always carry (their real dollars), and any other expense
-            // is included only when management has marked it "applies to actual"
-            // (e.g. a factoring % or insurance that is a genuine cost). The rest
-            // are KPI-only estimates and drop out of the factual figure entirely.
-            if ($basis === 'actual' && $expense->actual_source === null && ! $expense->applies_to_actual) {
+            // Each basis includes its own set of expenses. In Actual mode the
+            // P&L is the real ledger: the five actual-backed expenses always
+            // carry (their real dollars), and any other expense is included only
+            // when marked "applies to actual" (a factoring % or insurance that is
+            // a genuine cost). In KPI mode an expense is included unless it has
+            // been marked Actual-only (applies_to_kpi = false). Excluded expenses
+            // drop out of that basis' figure entirely.
+            if ($basis === 'actual') {
+                if ($expense->actual_source === null && ! $expense->applies_to_actual) {
+                    continue;
+                }
+            } elseif (! $expense->applies_to_kpi) {
                 continue;
             }
 

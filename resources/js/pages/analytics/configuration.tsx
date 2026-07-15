@@ -115,6 +115,8 @@ type TeamExpense = {
     actual_source: string | null;
     /** Whether this expense is included in the Actual P&L (editable per expense). */
     applies_to_actual: boolean;
+    /** Whether this expense is included in the KPI P&L (uncheck for an Actual-only expense). */
+    applies_to_kpi: boolean;
     current_rate: number | null;
     rates: ExpenseRate[];
     applies_to: string[] | null;
@@ -227,11 +229,47 @@ function AppliesToActualCheckbox({
     );
 }
 
+function AppliesToKpiCheckbox({
+    checked,
+    onChange,
+}: {
+    checked: boolean;
+    onChange: (v: boolean) => void;
+}) {
+    const id = useId();
+
+    return (
+        <div className="relative flex w-full items-start gap-2 rounded-md border border-input p-3 shadow-xs outline-none has-data-[state=checked]:border-primary/50">
+            <div className="grid grow gap-1">
+                <Label htmlFor={id} className="cursor-pointer">
+                    Include in KPI P&amp;L
+                </Label>
+                <p
+                    className="text-xs text-muted-foreground"
+                    id={`${id}-description`}
+                >
+                    Show this expense in the averaged KPI view. Uncheck it to make
+                    the expense Actual-only — hidden from KPI but still counted in
+                    the factual numbers.
+                </p>
+            </div>
+            <Checkbox
+                id={id}
+                aria-describedby={`${id}-description`}
+                className="order-1 after:absolute after:inset-0"
+                checked={checked}
+                onCheckedChange={(v) => onChange(v === true)}
+            />
+        </div>
+    );
+}
+
 const emptyExpense = {
     name: '',
     description: '',
     calculation_type: 'flat',
     applies_to_actual: true,
+    applies_to_kpi: true,
     rate: '',
     effective_from: isoMonday(),
     applies_to: [] as string[],
@@ -442,6 +480,7 @@ export default function Configuration({
                         : null,
                 skip_when_no_gross: newExpense.skip_when_no_gross,
                 applies_to_actual: newExpense.applies_to_actual,
+                applies_to_kpi: newExpense.applies_to_kpi,
             },
             {
                 onSuccess: () => {
@@ -479,6 +518,7 @@ export default function Configuration({
                 skip_when_no_gross: editingExpense.skip_when_no_gross,
                 sort_order: editingExpense.sort_order,
                 applies_to_actual: editingExpense.applies_to_actual,
+                applies_to_kpi: editingExpense.applies_to_kpi,
             },
             { onSuccess: () => setEditingExpense(null) },
         );
@@ -1515,6 +1555,19 @@ export default function Configuration({
                                                     }
                                                 />
                                             </div>
+                                            <div className="sm:col-span-2">
+                                                <AppliesToKpiCheckbox
+                                                    checked={
+                                                        newExpense.applies_to_kpi
+                                                    }
+                                                    onChange={(v) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            applies_to_kpi: v,
+                                                        })
+                                                    }
+                                                />
+                                            </div>
                                         </div>
                                     </form>
                                     <DialogFooter>
@@ -1536,6 +1589,7 @@ export default function Configuration({
                                         <TableRow>
                                             <TableHead>Name</TableHead>
                                             <TableHead>Type</TableHead>
+                                            <TableHead>In KPI</TableHead>
                                             <TableHead>In Actual</TableHead>
                                             <TableHead>Current Rate</TableHead>
                                             <TableHead>Applies To</TableHead>
@@ -1551,23 +1605,60 @@ export default function Configuration({
                                                 <TableRow key={exp.id}>
                                                     <TableCell>
                                                         {isEditing ? (
-                                                            <Input
-                                                                value={
-                                                                    editingExpense.name
-                                                                }
-                                                                onChange={(e) =>
-                                                                    setEditingExpense(
-                                                                        {
-                                                                            ...editingExpense,
-                                                                            name: e
-                                                                                .target
-                                                                                .value,
-                                                                        },
-                                                                    )
-                                                                }
-                                                            />
+                                                            <div className="flex flex-col gap-1">
+                                                                <Input
+                                                                    value={
+                                                                        editingExpense.name
+                                                                    }
+                                                                    onChange={(
+                                                                        e,
+                                                                    ) =>
+                                                                        setEditingExpense(
+                                                                            {
+                                                                                ...editingExpense,
+                                                                                name: e
+                                                                                    .target
+                                                                                    .value,
+                                                                            },
+                                                                        )
+                                                                    }
+                                                                />
+                                                                <Input
+                                                                    value={
+                                                                        editingExpense.description ??
+                                                                        ''
+                                                                    }
+                                                                    placeholder="Description (optional)"
+                                                                    className="h-8 text-xs"
+                                                                    onChange={(
+                                                                        e,
+                                                                    ) =>
+                                                                        setEditingExpense(
+                                                                            {
+                                                                                ...editingExpense,
+                                                                                description:
+                                                                                    e
+                                                                                        .target
+                                                                                        .value ||
+                                                                                    null,
+                                                                            },
+                                                                        )
+                                                                    }
+                                                                />
+                                                            </div>
                                                         ) : (
-                                                            exp.name
+                                                            <div className="flex flex-col">
+                                                                <span>
+                                                                    {exp.name}
+                                                                </span>
+                                                                {exp.description && (
+                                                                    <span className="text-xs text-muted-foreground">
+                                                                        {
+                                                                            exp.description
+                                                                        }
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                         )}
                                                     </TableCell>
                                                     <TableCell>
@@ -1619,6 +1710,38 @@ export default function Configuration({
                                                                     exp.calculation_type,
                                                             )?.label ??
                                                             exp.calculation_type)
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        {isEditing ? (
+                                                            <label className="flex cursor-pointer items-center gap-2 text-xs">
+                                                                <Checkbox
+                                                                    checked={
+                                                                        editingExpense.applies_to_kpi
+                                                                    }
+                                                                    onCheckedChange={(
+                                                                        v,
+                                                                    ) =>
+                                                                        setEditingExpense(
+                                                                            {
+                                                                                ...editingExpense,
+                                                                                applies_to_kpi:
+                                                                                    v ===
+                                                                                    true,
+                                                                            },
+                                                                        )
+                                                                    }
+                                                                />
+                                                                Included
+                                                            </label>
+                                                        ) : exp.applies_to_kpi ? (
+                                                            <span className="text-xs font-medium">
+                                                                Included
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-xs text-muted-foreground">
+                                                                Excluded
+                                                            </span>
                                                         )}
                                                     </TableCell>
                                                     <TableCell>

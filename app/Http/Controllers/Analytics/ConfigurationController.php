@@ -109,6 +109,7 @@ class ConfigurationController extends Controller
                     // is the editable "include in the Actual P&L" toggle for the rest.
                     'actual_source' => $e->actual_source?->value,
                     'applies_to_actual' => $e->applies_to_actual,
+                    'applies_to_kpi' => $e->applies_to_kpi,
                     'current_rate' => $e->currentRate(),
                     'rates' => $e->rates->sortByDesc('effective_from')->values()
                         ->map(fn (TeamExpenseRate $r) => [
@@ -321,6 +322,7 @@ class ConfigurationController extends Controller
             'description' => ['nullable', 'string', 'max:500'],
             'calculation_type' => ['required', Rule::enum(ExpenseCalculationType::class)],
             'applies_to_actual' => ['boolean'],
+            'applies_to_kpi' => ['boolean'],
             'rate' => ['required', 'numeric', 'min:0'],
             'effective_from' => ['required', 'date'],
             'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
@@ -337,6 +339,7 @@ class ConfigurationController extends Controller
             'description' => $data['description'] ?? null,
             'calculation_type' => $data['calculation_type'],
             'applies_to_actual' => $data['applies_to_actual'] ?? true,
+            'applies_to_kpi' => $data['applies_to_kpi'] ?? true,
             'applies_to' => $data['applies_to'] ?? null,
             'driver_paid_contract_types' => $data['driver_paid_contract_types'] ?? null,
             'skip_when_no_gross' => $data['skip_when_no_gross'] ?? false,
@@ -361,6 +364,7 @@ class ConfigurationController extends Controller
             'description' => ['nullable', 'string', 'max:500'],
             'calculation_type' => ['required', Rule::enum(ExpenseCalculationType::class)],
             'applies_to_actual' => ['boolean'],
+            'applies_to_kpi' => ['boolean'],
             'applies_to' => ['nullable', 'array'],
             'applies_to.*' => [Rule::enum(DriverContractType::class)],
             'driver_paid_contract_types' => ['nullable', 'array'],

@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'calculation_type',
     'actual_source',
     'applies_to_actual',
+    'applies_to_kpi',
     'applies_to',
     'driver_paid_contract_types',
     'skip_when_no_gross',
@@ -41,6 +42,7 @@ class TeamExpense extends Model
             'calculation_type' => ExpenseCalculationType::class,
             'actual_source' => ExpenseActualSource::class,
             'applies_to_actual' => 'boolean', // included in the basis=actual P&L (curated per expense)
+            'applies_to_kpi' => 'boolean', // included in the basis=kpi P&L (uncheck for an Actual-only expense)
             'applies_to' => 'array', // array<string> of DriverContractType values, or null for all
             'driver_paid_contract_types' => 'array', // contract types where driver covers (expense becomes carrier income)
             'skip_when_no_gross' => 'boolean',

@@ -97,11 +97,15 @@ class AnalyticsComparisonController extends Controller
             'rows' => $rows->values(),
             'dispatcherRows' => $dispatcherRows->values(),
             'keyMetrics' => $keyMetrics,
-            'expenses' => $team->expenses->map(fn ($e) => [
-                'id' => $e->id,
-                'name' => $e->name,
-                'calculation_type' => $e->calculation_type->value,
-            ])->values(),
+            // Comparison is KPI-only, so drop Actual-only expenses from the columns.
+            'expenses' => $team->expenses
+                ->filter(fn ($e) => $e->applies_to_kpi)
+                ->map(fn ($e) => [
+                    'id' => $e->id,
+                    'name' => $e->name,
+                    'description' => $e->description,
+                    'calculation_type' => $e->calculation_type->value,
+                ])->values(),
             'canManage' => $canManage,
         ];
     }
