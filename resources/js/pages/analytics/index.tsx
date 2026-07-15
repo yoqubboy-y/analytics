@@ -1,11 +1,12 @@
 import { Head, router, usePage } from '@inertiajs/react';
+import { addDays, format } from 'date-fns';
 import { DownloadIcon, Loader2Icon, Share2Icon } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { index as analyticsIndex } from '@/actions/App/Http/Controllers/Analytics/AnalyticsController';
-import {
-    AddDriverConfigDialog,
-    type DialogContractType,
-    type DialogImportedDriver,
+import { AddDriverConfigDialog } from '@/components/analytics/add-driver-config-dialog';
+import type {
+    DialogContractType,
+    DialogImportedDriver,
 } from '@/components/analytics/add-driver-config-dialog';
 import { DispatcherChart } from '@/components/analytics/dispatcher-chart';
 import { DispatcherRankings } from '@/components/analytics/dispatcher-rankings';
@@ -17,7 +18,13 @@ import { DateRangePicker } from '@/components/date-range-picker';
 import { ShareDashboardModal } from '@/components/share-dashboard-modal';
 import type { DashboardShareItem } from '@/components/share-dashboard-modal';
 import { Button } from '@/components/ui/button';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { downloadElementAsPng } from '@/lib/download';
+import { cn } from '@/lib/utils';
 
 type Props = {
     rows: Row[];
@@ -31,6 +38,12 @@ type Props = {
     expenses: Expense[];
     startDate: string;
     endDate: string;
+    /** Which expense basis the P&L rows were computed on. */
+    basis: 'kpi' | 'actual';
+    /** Whether the selected range is fully covered by actuals data. */
+    actualAvailable: boolean;
+    /** [minWeek, maxWeek] of loaded actuals, for the disabled-toggle hint. */
+    coveredRange: [string, string] | null;
     keyMetrics: KeyMetricsData;
     canManage: boolean;
     shares: DashboardShareItem[];
@@ -46,6 +59,9 @@ export default function AnalyticsDashboard({
     expenses,
     startDate,
     endDate,
+    basis,
+    actualAvailable,
+    coveredRange,
     keyMetrics,
     canManage,
     shares,
@@ -71,7 +87,10 @@ export default function AnalyticsDashboard({
         driver_name?: string;
     } | null>(null);
 
-    const takenKeysSet = useMemo(() => new Set(takenDriverKeys), [takenDriverKeys]);
+    const takenKeysSet = useMemo(
+        () => new Set(takenDriverKeys),
+        [takenDriverKeys],
+    );
 
     function handleConfigureDriver(row: Row) {
         setConfigurePrefill({
@@ -109,7 +128,19 @@ export default function AnalyticsDashboard({
     function handleRangeChange(start: string, end: string) {
         router.get(
             analyticsIndex.url(slug),
-            { start_date: start, end_date: end },
+            { start_date: start, end_date: end, basis },
+            { preserveState: true },
+        );
+    }
+
+    function handleBasisChange(next: 'kpi' | 'actual') {
+        if (next === basis) {
+            return;
+        }
+
+        router.get(
+            analyticsIndex.url(slug),
+            { start_date: startDate, end_date: endDate, basis: next },
             { preserveState: true },
         );
     }
@@ -160,6 +191,12 @@ export default function AnalyticsDashboard({
                             </Button>
                         </>
                     )}
+                    <BasisToggle
+                        basis={basis}
+                        actualAvailable={actualAvailable}
+                        coveredRange={coveredRange}
+                        onChange={handleBasisChange}
+                    />
                     <DateRangePicker
                         startDate={startDate}
                         endDate={endDate}
@@ -194,7 +231,9 @@ export default function AnalyticsDashboard({
                         expenses={expenses}
                         title="P&L Report"
                         canDownload={canManage}
-                        onConfigureDriver={canManage ? handleConfigureDriver : undefined}
+                        onConfigureDriver={
+                            canManage ? handleConfigureDriver : undefined
+                        }
                     />
                 </div>
             </div>
@@ -224,6 +263,66 @@ export default function AnalyticsDashboard({
                 </>
             )}
         </>
+    );
+}
+
+/**
+ * KPI ↔ Actual expense-basis switch. "Actual" swaps the truck/trailer/fuel/
+ * toll/maintenance expenses for real per-unit dollars; it's only selectable
+ * when the whole range is covered by loaded actuals.
+ */
+function BasisToggle({
+    basis,
+    actualAvailable,
+    coveredRange,
+    onChange,
+}: {
+    basis: 'kpi' | 'actual';
+    actualAvailable: boolean;
+    coveredRange: [string, string] | null;
+    onChange: (b: 'kpi' | 'actual') => void;
+}) {
+    const btn = (value: 'kpi' | 'actual', label: string, disabled = false) => (
+        <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(value)}
+            className={cn(
+                'h-7 rounded px-2.5 text-xs font-medium transition-colors',
+                basis === value
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground',
+                disabled &&
+                    'cursor-not-allowed opacity-40 hover:text-muted-foreground',
+            )}
+        >
+            {label}
+        </button>
+    );
+
+    const coveredHint = coveredRange
+        ? `Actuals cover ${format(new Date(coveredRange[0] + 'T00:00:00'), 'MMM d')}–${format(
+              addDays(new Date(coveredRange[1] + 'T00:00:00'), 6),
+              'MMM d',
+          )}`
+        : 'No actuals loaded yet';
+
+    return (
+        <div className="flex h-8 items-center gap-0.5 rounded-md border bg-muted/40 p-0.5">
+            {btn('kpi', 'KPI')}
+            {actualAvailable ? (
+                btn('actual', 'Actual')
+            ) : (
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <span tabIndex={0}>
+                            {btn('actual', 'Actual', true)}
+                        </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{coveredHint}</TooltipContent>
+                </Tooltip>
+            )}
+        </div>
     );
 }
 

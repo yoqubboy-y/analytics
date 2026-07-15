@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\DriverAssignmentKind;
 use App\Enums\ExpenseCalculationType;
 use App\Enums\TeamDataSource;
 use App\Models\DriverConfig;
@@ -30,17 +31,20 @@ class AnalyticsService
      *
      * @return Collection<int, array<string, mixed>>
      */
-    public function weeklyReport(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): Collection
+    public function weeklyReport(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate, string $basis = 'kpi'): Collection
     {
         if ($team->data_source === TeamDataSource::Xlsx) {
-            return $this->weeklyReportFromXlsx($team, $startDate, $endDate);
+            return $this->weeklyReportFromXlsx($team, $startDate, $endDate, $basis);
         }
 
         /** @var Collection<int, TeamExpense> $expenses */
         $expenses = $team->expenses->load('rates');
 
         /** @var Collection<int|string, DriverConfig> $driverConfigs */
-        $driverConfigs = $team->driverConfigs->load('rates')->keyBy('external_driver_id');
+        $driverConfigs = $team->driverConfigs->load('rates', 'assignments')->keyBy('external_driver_id');
+
+        // Under actual basis, preload the real per-unit expense data once.
+        $actuals = $basis === 'actual' ? ExpenseActualsLookup::forWindow($startDate, $endDate) : null;
 
         $rows = $this->fetchRawData($team, $startDate, $endDate);
 
@@ -75,6 +79,8 @@ class AnalyticsService
             $weeklyByDriver->get($row->driver_id, collect()),
             $windowWeeks,
             $activeWeeksByDriver[$row->driver_id] ?? [],
+            $basis,
+            $actuals,
         ));
 
         $totals = $this->computeTotals($driverRows, $expenses);
@@ -748,7 +754,7 @@ class AnalyticsService
      * @param  array<int, string>  $activeWeeks  week-start dates this driver was active
      * @return array<string, mixed>
      */
-    private function computeRow(object $row, Collection $driverConfigs, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks, array $activeWeeks): array
+    private function computeRow(object $row, Collection $driverConfigs, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks, array $activeWeeks, string $basis = 'kpi', ?ExpenseActualsLookup $actuals = null): array
     {
         $driverConfig = $driverConfigs->get($row->driver_id);
 
@@ -782,7 +788,10 @@ class AnalyticsService
             ];
         }
 
-        $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks, $activeWeeks);
+        // analytics_db teams have no per-week truck history; the current truck
+        // (from the TMS join) is the actual-mode fallback and is accurate for
+        // the recent covered weeks.
+        $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks, $activeWeeks, $basis, $row->truck_number ?? null, $actuals);
 
         $profitLoss = round($gross - $financials['salary'] - $financials['total_expenses'], 2);
 
@@ -827,7 +836,7 @@ class AnalyticsService
      * @param  array<int, string>  $activeWeeks  week-start dates this driver had any board
      * @return array{salary: float, expenses: array<string, float>, total_expenses: float}
      */
-    public function computeFinancials(DriverConfig $driverConfig, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks, array $activeWeeks): array
+    public function computeFinancials(DriverConfig $driverConfig, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks, array $activeWeeks, string $basis = 'kpi', ?string $fallbackTruck = null, ?ExpenseActualsLookup $actuals = null): array
     {
         // Fast lookup for "was the driver active this week?" flat-expense gating.
         $activeWeekSet = array_flip($activeWeeks);
@@ -886,13 +895,13 @@ class AnalyticsService
                         continue;
                     }
 
-                    $rate = $expense->rateAsOf($weekStart);
+                    $weekAmount = $this->expenseWeekAmount($expense, $driverConfig, $weekStart, $weekGross, 0.0, $basis, $fallbackTruck, $actuals);
 
-                    if ($rate === null) {
+                    if ($weekAmount === null) {
                         continue;
                     }
 
-                    $amount += $expense->calculate($rate, $weekGross, 0.0);
+                    $amount += $weekAmount;
                     $charged = true;
                 }
             } else {
@@ -905,13 +914,13 @@ class AnalyticsService
                         continue;
                     }
 
-                    $rate = $expense->rateAsOf($weekStart);
+                    $weekAmount = $this->expenseWeekAmount($expense, $driverConfig, $weekStart, $weekGross, (float) $bucket->week_miles, $basis, $fallbackTruck, $actuals);
 
-                    if ($rate === null) {
+                    if ($weekAmount === null) {
                         continue;
                     }
 
-                    $amount += $expense->calculate($rate, $weekGross, (float) $bucket->week_miles);
+                    $amount += $weekAmount;
                     $charged = true;
                 }
             }
@@ -941,6 +950,30 @@ class AnalyticsService
             'expenses' => $computedExpenses,
             'total_expenses' => round($totalCarrierCost, 2),
         ];
+    }
+
+    /**
+     * The amount to charge one expense for one week. Under `basis=actual`, an
+     * expense with an `actual_source` uses the real per-unit dollars for the
+     * driver's truck/trailer that week (null → $0: no cost recorded); everything
+     * else, and the whole KPI basis, uses the configured rate. Returns null only
+     * when the configured rate resolves to null (not charged), preserving the
+     * existing "skip this week" behaviour.
+     */
+    private function expenseWeekAmount(TeamExpense $expense, DriverConfig $driverConfig, CarbonImmutable $weekStart, float $weekGross, float $weekMiles, string $basis, ?string $fallbackTruck, ?ExpenseActualsLookup $actuals): ?float
+    {
+        $source = $expense->actual_source;
+
+        if ($basis === 'actual' && $source !== null && $actuals !== null) {
+            $truck = $driverConfig->assignmentAsOf(DriverAssignmentKind::Truck, $weekStart) ?? $fallbackTruck;
+            $trailer = $driverConfig->assignmentAsOf(DriverAssignmentKind::Trailer, $weekStart);
+
+            return $actuals->amountFor($source, $truck, $trailer, $weekStart) ?? 0.0;
+        }
+
+        $rate = $expense->rateAsOf($weekStart);
+
+        return $rate === null ? null : $expense->calculate($rate, $weekGross, $weekMiles);
     }
 
     /**
@@ -1198,7 +1231,7 @@ class AnalyticsService
      *
      * @return Collection<int, array<string, mixed>>
      */
-    private function weeklyReportFromXlsx(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate): Collection
+    private function weeklyReportFromXlsx(Team $team, Carbon|CarbonImmutable $startDate, Carbon|CarbonImmutable $endDate, string $basis = 'kpi'): Collection
     {
         /** @var Collection<int, TeamExpense> $expenses */
         $expenses = $team->expenses->load('rates');
@@ -1206,7 +1239,10 @@ class AnalyticsService
         // XLSX teams identify drivers by the same `xlsxDriverKey()` string
         // we use to group imported rows.
         /** @var Collection<string, DriverConfig> $driverConfigs */
-        $driverConfigs = $team->driverConfigs->load('rates')->keyBy('external_driver_key');
+        $driverConfigs = $team->driverConfigs->load('rates', 'assignments')->keyBy('external_driver_key');
+
+        // Under actual basis, preload the real per-unit expense data once.
+        $actuals = $basis === 'actual' ? ExpenseActualsLookup::forWindow($startDate, $endDate) : null;
 
         $rows = $team->xlsxDriverDays()
             ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
@@ -1219,7 +1255,7 @@ class AnalyticsService
 
         $windowWeeks = $this->windowWeeks($startDate, $endDate);
 
-        $driverRows = $grouped->map(function (Collection $group, string $driverKey) use ($driverConfigs, $expenses, $windowWeeks) {
+        $driverRows = $grouped->map(function (Collection $group, string $driverKey) use ($driverConfigs, $expenses, $windowWeeks, $basis, $actuals) {
             $first = $group->first();
             $gross = (float) $group->sum('gross');
             $miles = (float) $group->sum('miles');
@@ -1286,7 +1322,9 @@ class AnalyticsService
             // actually appears in the sheet — same rule as the analytics-DB path.
             $activeWeeks = $weeklyBuckets->pluck('week_start')->all();
 
-            $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks, $activeWeeks);
+            // XLSX identity is name+truck, so the group's truck is the per-week
+            // fallback; a configured assignment history refines it per week.
+            $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks, $activeWeeks, $basis, $first->truck_number, $actuals);
             $profitLoss = round($gross - $financials['salary'] - $financials['total_expenses'], 2);
             $totalExpensesWithSalary = round($financials['total_expenses'] + $financials['salary'], 2);
 

@@ -9,6 +9,7 @@ use App\Http\Controllers\Controller;
 use App\Models\DashboardShare;
 use App\Models\Team;
 use App\Services\AnalyticsService;
+use App\Services\ExpenseActualsLookup;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -36,12 +37,24 @@ class AnalyticsController extends Controller
             $endDate = $startDate->copy()->addDays($maxRangeDays);
         }
 
-        $rows = $this->analytics->weeklyReport($currentTeam, $startDate, $endDate);
+        // Actual (factual) basis swaps the per-unit expenses for real dollars,
+        // but only when every week in the range has ledger coverage. Otherwise
+        // the request silently falls back to KPI.
+        $coveredWeeks = ExpenseActualsLookup::coveredWeeks();
+        $actualAvailable = $coveredWeeks !== null
+            && $startDate->copy()->startOfWeek()->toDateString() >= $coveredWeeks[0]
+            && $endDate->copy()->startOfWeek()->toDateString() <= $coveredWeeks[1];
+        $basis = ($request->string('basis')->toString() === 'actual' && $actualAvailable) ? 'actual' : 'kpi';
 
-        // Per-dispatcher rows for the ranking/chart widgets — a driver split
-        // across dispatchers is attributed week by week, not lumped on their
-        // most-frequent dispatcher.
-        $dispatcherRows = $this->analytics->splitByDispatcher($currentTeam, $rows, $startDate, $endDate);
+        $rows = $this->analytics->weeklyReport($currentTeam, $startDate, $endDate, $basis);
+
+        // Per-dispatcher rows for the ranking/chart widgets — always KPI (fair
+        // comparison is their point). splitByDispatcher passes non-split drivers
+        // through verbatim, so it must be fed KPI rows, not the P&L basis.
+        $kpiRows = $basis === 'actual'
+            ? $this->analytics->weeklyReport($currentTeam, $startDate, $endDate, 'kpi')
+            : $rows;
+        $dispatcherRows = $this->analytics->splitByDispatcher($currentTeam, $kpiRows, $startDate, $endDate);
 
         $keyMetrics = $this->analytics->weeklyKeyMetrics($currentTeam, $startDate, $endDate);
 
@@ -81,6 +94,9 @@ class AnalyticsController extends Controller
             ])->values(),
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
+            'basis' => $basis,
+            'actualAvailable' => $actualAvailable,
+            'coveredRange' => $coveredWeeks,
             'canManage' => $canManage,
             'shares' => $canManage ? $this->activeShares($currentTeam) : [],
             'dataSource' => $currentTeam->data_source->value,
