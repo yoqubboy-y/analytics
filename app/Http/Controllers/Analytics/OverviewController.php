@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Analytics;
 
+use App\Enums\ExpenseActualSource;
 use App\Enums\TeamDataSource;
 use App\Http\Controllers\Controller;
 use App\Models\Team;
@@ -130,6 +131,14 @@ class OverviewController extends Controller
         $configuredTrucks = $configured->count();
         $net = $configured->isEmpty() ? null : round((float) $configured->sum('profit_loss'), 2);
 
+        // Fleet Maintenance total + its cent-per-mile (basis-dependent). Null when
+        // the team has no fleet expense so the UI shows "—" rather than $0.
+        $fleetName = $team->expenses->first(fn ($e) => $e->actual_source === ExpenseActualSource::Fleet)?->name;
+        $fleetExpenses = $fleetName !== null
+            ? round((float) $rows->sum(fn ($r) => $r['expenses'][$fleetName] ?? 0.0), 2)
+            : null;
+        $fleetCpm = ($fleetExpenses !== null && $miles > 0) ? round($fleetExpenses / $miles, 4) : null;
+
         // XLSX teams are only as current as their last upload; analytics-DB
         // teams stream live from the TMS, so there is no "through" date.
         $lastUpload = $team->data_source === TeamDataSource::Xlsx
@@ -155,6 +164,8 @@ class OverviewController extends Controller
             'margin' => ($net !== null && $gross != 0.0)
                 ? round($net / $gross * 100, 1)
                 : null,
+            'fleet_expenses' => $fleetExpenses,
+            'fleet_cpm' => $fleetCpm,
             'utilization' => (float) ($keyMetrics['compound_utilization_rate'] ?? 0.0),
             'data_through' => $lastUpload ? (string) $lastUpload : null,
             'is_live' => $team->data_source === TeamDataSource::AnalyticsDb,

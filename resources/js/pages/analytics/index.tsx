@@ -38,6 +38,8 @@ type Props = {
     actualAvailable: boolean;
     /** [minWeek, maxWeek] of loaded actuals, for the disabled-toggle hint. */
     coveredRange: [string, string] | null;
+    /** Name of the Fleet Maintenance expense, or null; drives the fleet Key Metric. */
+    fleetExpenseName: string | null;
     keyMetrics: KeyMetricsData;
     canManage: boolean;
     shares: DashboardShareItem[];
@@ -56,6 +58,7 @@ export default function AnalyticsDashboard({
     basis,
     actualAvailable,
     coveredRange,
+    fleetExpenseName,
     keyMetrics,
     canManage,
     shares,
@@ -205,6 +208,7 @@ export default function AnalyticsDashboard({
                             rows={rows}
                             metrics={keyMetrics}
                             weeks={weeks}
+                            fleetExpenseName={fleetExpenseName}
                             canDownload={canManage}
                         />
                         <DispatcherChart

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Analytics;
 
+use App\Enums\ExpenseActualSource;
 use App\Enums\TeamRole;
 use App\Http\Controllers\Controller;
 use App\Models\Team;
@@ -106,6 +107,8 @@ class AnalyticsComparisonController extends Controller
                     'description' => $e->description,
                     'calculation_type' => $e->calculation_type->value,
                 ])->values(),
+            'fleetExpenseName' => $team->expenses
+                ->first(fn ($e) => $e->actual_source === ExpenseActualSource::Fleet)?->name,
             'canManage' => $canManage,
         ];
     }

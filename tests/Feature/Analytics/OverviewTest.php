@@ -1,11 +1,14 @@
 <?php
 
 use App\Enums\DriverContractType;
+use App\Enums\ExpenseActualSource;
+use App\Enums\ExpenseCalculationType;
 use App\Enums\TeamDataSource;
 use App\Enums\TeamRole;
 use App\Models\DriverConfig;
 use App\Models\ExpenseActual;
 use App\Models\Team;
+use App\Models\TeamExpense;
 use App\Models\User;
 use App\Models\XlsxDriverDay;
 use Carbon\CarbonImmutable;
@@ -84,6 +87,47 @@ test('per-truck averages and margin are internally consistent for a configured t
                 && $t['avg_per_truck'] === $t['gross']            // gross ÷ 1 truck
                 && $t['net_per_truck'] === $t['net']              // net ÷ 1 configured truck
                 && $t['margin'] === round($t['net'] / $t['gross'] * 100, 1);
+        }));
+});
+
+test('fleet expenses and cent-per-mile are computed per team', function () {
+    $user = User::factory()->create();
+    xlsxTeamFor($user, 500); // second team so the overview renders
+
+    $week = CarbonImmutable::now()->startOfWeek()->toDateString();
+    $team = Team::factory()->create(['is_personal' => false, 'data_source' => TeamDataSource::Xlsx]);
+    $team->members()->attach($user, ['role' => TeamRole::Owner->value]);
+    $config = DriverConfig::factory()->for($team)->create([
+        'contract_type' => DriverContractType::CompanyCpm,
+        'external_driver_key' => 'jane doe|GL0009',
+    ]);
+    $config->rates()->create(['tariff_rate' => 0.50, 'effective_from' => $week]);
+    // withRate() replaces the factory's default random rate (which would
+    // otherwise collide on the same effective_from and win nondeterministically).
+    TeamExpense::factory()->for($team)->withRate(0.20, $week)->create([
+        'name' => 'Fleet Maintenance',
+        'calculation_type' => ExpenseCalculationType::PerMile,
+        'actual_source' => ExpenseActualSource::Fleet,
+        'applies_to' => null,
+    ]);
+    XlsxDriverDay::create([
+        'team_id' => $team->id,
+        'work_date' => $week,
+        'driver_name' => 'Jane Doe',
+        'truck_number' => 'GL0009',
+        'gross' => 1000,
+        'miles' => 100,
+        'source_format' => 'test',
+    ]);
+
+    $this->actingAs($user)
+        ->get(route('overview'))
+        ->assertInertia(fn ($page) => $page->where('teams', function ($teams) {
+            $t = collect($teams)->firstWhere('configured_drivers', 1);
+
+            return $t !== null
+                && (float) $t['fleet_expenses'] === 20.0 // 100 mi × $0.20
+                && (float) $t['fleet_cpm'] === 0.2;       // $20 ÷ 100 mi
         }));
 });
 

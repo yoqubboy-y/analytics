@@ -31,6 +31,10 @@ type TeamCard = {
     net_per_truck: number | null;
     /** Net ÷ gross as a percentage; null when net is null. */
     margin: number | null;
+    /** Fleet Maintenance total for the period; null when the team has no fleet expense. */
+    fleet_expenses: number | null;
+    /** Fleet Maintenance $/mile; null when unavailable. */
+    fleet_cpm: number | null;
     utilization: number;
     data_through: string | null;
     is_live: boolean;
@@ -232,6 +236,12 @@ export default function Overview({
                                     Margin
                                 </TableHead>
                                 <TableHead className="text-right">
+                                    Fleet Exp
+                                </TableHead>
+                                <TableHead className="text-right">
+                                    Fleet ¢/mi
+                                </TableHead>
+                                <TableHead className="text-right">
                                     RPM
                                 </TableHead>
                                 <TableHead className="text-right">
@@ -336,6 +346,24 @@ export default function Overview({
                                             >
                                                 {team.margin.toFixed(1)}%
                                             </span>
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="text-right tabular-nums">
+                                        {team.fleet_expenses === null ? (
+                                            <span className="text-xs text-muted-foreground">
+                                                —
+                                            </span>
+                                        ) : (
+                                            fmtCurrency(team.fleet_expenses)
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="text-right tabular-nums">
+                                        {team.fleet_cpm === null ? (
+                                            <span className="text-xs text-muted-foreground">
+                                                —
+                                            </span>
+                                        ) : (
+                                            `${(team.fleet_cpm * 100).toFixed(1)}¢`
                                         )}
                                     </TableCell>
                                     <TableCell className="text-right tabular-nums">

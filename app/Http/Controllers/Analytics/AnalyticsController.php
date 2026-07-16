@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Analytics;
 
 use App\Enums\DriverContractType;
+use App\Enums\ExpenseActualSource;
 use App\Enums\TeamDataSource;
 use App\Enums\TeamRole;
 use App\Http\Controllers\Controller;
@@ -106,6 +107,10 @@ class AnalyticsController extends Controller
             'basis' => $basis,
             'actualAvailable' => $actualAvailable,
             'coveredRange' => $coveredWeeks,
+            // Name of the "fleet" expense (Fleet Maintenance) so Key Metrics can
+            // read its total + cent-per-mile from the basis-computed rows.
+            'fleetExpenseName' => $currentTeam->expenses
+                ->first(fn ($e) => $e->actual_source === ExpenseActualSource::Fleet)?->name,
             'canManage' => $canManage,
             'shares' => $canManage ? $this->activeShares($currentTeam) : [],
             'dataSource' => $currentTeam->data_source->value,

@@ -24,6 +24,9 @@ const fmtInt = (n: number) => n.toLocaleString('en-US');
 
 const fmtPct = (n: number) => `${n.toFixed(2)}%`;
 
+// A $/mile rate shown as cents per mile, e.g. 0.183 → "18.3¢".
+const fmtCents = (n: number) => `${(n * 100).toFixed(1)}¢`;
+
 export interface KeyMetricsData {
     drivers: {
         total: number;
@@ -41,6 +44,8 @@ interface KeyMetricsProps {
     metrics: KeyMetricsData;
     /** Whole weeks in the window; per-truck averages are divided by this. */
     weeks: number;
+    /** Name of the Fleet Maintenance expense column, or null if the team has none. */
+    fleetExpenseName?: string | null;
     /** Show the PNG download control (hidden for viewers). */
     canDownload?: boolean;
 }
@@ -49,6 +54,7 @@ export function KeyMetrics({
     rows,
     metrics,
     weeks,
+    fleetExpenseName,
     canDownload = false,
 }: KeyMetricsProps) {
     const cardRef = useRef<HTMLDivElement>(null);
@@ -86,6 +92,14 @@ export function KeyMetrics({
     const avgNetPerDriver = perDriverWeek(net);
     const margin = gross > 0 ? (net / gross) * 100 : 0;
     const netTone = net >= 0 ? 'text-emerald-500' : 'text-red-500';
+
+    // Fleet Maintenance total + its cent-per-mile. Both follow the active basis
+    // (rows are recomputed per basis); absent when the team has no fleet expense.
+    const fleetExpenses =
+        fleetExpenseName && totalRow
+            ? (totalRow.expenses[fleetExpenseName] ?? 0)
+            : 0;
+    const fleetCpm = miles > 0 ? fleetExpenses / miles : 0;
 
     const {
         drivers,
@@ -200,6 +214,26 @@ export function KeyMetrics({
                     </div>
                 </div>
             </div>
+
+            {/* Fleet Maintenance — total + cent-per-mile (follows the basis) */}
+            {fleetExpenseName && (
+                <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                    <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm font-medium">
+                            Fleet Exp.:{' '}
+                            <span className="font-bold text-sky-500">
+                                {fmtCurrency(fleetExpenses)}
+                            </span>
+                        </p>
+                        <div className="text-right text-xs">
+                            <p className="text-muted-foreground">Cent/mile</p>
+                            <p className="font-semibold text-sky-500">
+                                {fmtCents(fleetCpm)}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Compound Utilization Rate — collapsible with event breakdown inside */}
             <Collapsible className="rounded-lg border bg-muted/30">
