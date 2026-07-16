@@ -87,6 +87,18 @@ class OverviewController extends Controller
             ? round($teamCards->sum(fn (array $c) => $c['utilization'] * $c['drivers']) / $totalDrivers, 1)
             : 0.0;
 
+        // Company fleet cost: sum the fleet expense across teams that have one,
+        // and its cent-per-mile as Σ fleet ÷ Σ (those teams') miles — a
+        // mile-weighted average, not a flat mean of per-team rates.
+        $fleetContributors = $teamCards->where('fleet_expenses', '!==', null);
+        $companyFleet = $fleetContributors->isEmpty()
+            ? null
+            : round((float) $fleetContributors->sum('fleet_expenses'), 2);
+        $fleetMiles = (float) $fleetContributors->sum('miles');
+        $companyFleetCpm = ($companyFleet !== null && $fleetMiles > 0)
+            ? round($companyFleet / $fleetMiles, 4)
+            : null;
+
         return Inertia::render('overview', [
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
@@ -101,6 +113,8 @@ class OverviewController extends Controller
                 'net' => $netContributors->isEmpty() ? null : round((float) $netContributors->sum('net'), 2),
                 'net_partial' => $netContributors->count() < $teamCards->count(),
                 'utilization' => $utilization,
+                'fleet_expenses' => $companyFleet,
+                'fleet_cpm' => $companyFleetCpm,
             ],
             'teams' => $teamCards,
         ]);

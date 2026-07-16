@@ -57,6 +57,10 @@ type Props = {
         net: number | null;
         net_partial: boolean;
         utilization: number;
+        /** Summed Fleet Maintenance across teams that have one; null if none. */
+        fleet_expenses: number | null;
+        /** Σ fleet ÷ Σ miles of those teams (mile-weighted); null if unavailable. */
+        fleet_cpm: number | null;
     };
     teams: TeamCard[];
 };
@@ -208,6 +212,15 @@ export default function Overview({
                         label="Drivers"
                         value={fmtNumber(company.drivers)}
                         hint={`${company.teams} teams`}
+                    />
+                    <Stat
+                        label="Fleet Exp."
+                        value={fmtCurrency(company.fleet_expenses)}
+                        hint={
+                            company.fleet_cpm === null
+                                ? 'Fleet maintenance'
+                                : `${(company.fleet_cpm * 100).toFixed(1)}¢ / mile`
+                        }
                     />
                 </div>
 

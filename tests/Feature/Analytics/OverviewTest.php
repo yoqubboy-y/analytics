@@ -122,13 +122,18 @@ test('fleet expenses and cent-per-mile are computed per team', function () {
 
     $this->actingAs($user)
         ->get(route('overview'))
-        ->assertInertia(fn ($page) => $page->where('teams', function ($teams) {
-            $t = collect($teams)->firstWhere('configured_drivers', 1);
+        ->assertInertia(fn ($page) => $page
+            ->where('teams', function ($teams) {
+                $t = collect($teams)->firstWhere('configured_drivers', 1);
 
-            return $t !== null
-                && (float) $t['fleet_expenses'] === 20.0 // 100 mi × $0.20
-                && (float) $t['fleet_cpm'] === 0.2;       // $20 ÷ 100 mi
-        }));
+                return $t !== null
+                    && (float) $t['fleet_expenses'] === 20.0 // 100 mi × $0.20
+                    && (float) $t['fleet_cpm'] === 0.2;       // $20 ÷ 100 mi
+            })
+            // Company roll-up: only the fleet team contributes (the other has no
+            // fleet expense), so the company figures match that team.
+            ->where('company.fleet_expenses', fn ($v) => (float) $v === 20.0)
+            ->where('company.fleet_cpm', fn ($v) => (float) $v === 0.2));
 });
 
 test('the overview honours the actual basis within covered weeks', function () {
