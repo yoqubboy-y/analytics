@@ -800,11 +800,22 @@ class AnalyticsService
         // (`expenses` map) and the `salary` column stay unchanged.
         $totalExpensesWithSalary = round($financials['total_expenses'] + $financials['salary'], 2);
 
+        // Prefer the config's time-versioned truck assignment (as of the period
+        // end) over the live TMS truck, which only reflects the driver's
+        // *current* unit and is wrong for past periods. Falls back to the live
+        // truck where no assignment covers the window, so drivers without one are
+        // unchanged. This mirrors how the actual-expense resolution already picks
+        // the unit, keeping the displayed truck and the dollars in agreement.
+        $displayWeek = end($windowWeeks) ?: null;
+        $displayTruck = $displayWeek
+            ? ($driverConfig->assignmentAsOf(DriverAssignmentKind::Truck, $displayWeek) ?? $row->truck_number)
+            : $row->truck_number;
+
         return [
             'driver_id' => $row->driver_id,
             'driver_name' => $row->driver_name,
             'dispatcher' => $row->dispatcher,
-            'truck_number' => $row->truck_number,
+            'truck_number' => $displayTruck,
             'type' => $driverConfig->contract_type->label(),
             'days' => (int) $row->days,
             'productive_event_days' => (int) ($row->productive_event_days ?? 0),
