@@ -153,6 +153,11 @@ class ConfigurationController extends Controller
             'tariff_rate' => ['required', 'numeric', 'min:0', 'max:9999'],
             'effective_from' => ['required', 'date'],
             'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
+            // Optional starting truck/trailer units — attached as open-ended
+            // assignments from the same effective week, so a brand-new config
+            // is born with the units that drive its actuals already in place.
+            'truck' => ['nullable', 'string', 'max:255'],
+            'trailer' => ['nullable', 'string', 'max:255'],
         ]);
 
         $config = $currentTeam->driverConfigs()->create([
@@ -167,6 +172,19 @@ class ConfigurationController extends Controller
             'effective_from' => $data['effective_from'],
             'effective_to' => $data['effective_to'] ?? null,
         ]);
+
+        foreach ([DriverAssignmentKind::Truck, DriverAssignmentKind::Trailer] as $kind) {
+            $value = trim((string) ($data[$kind->value] ?? ''));
+
+            if ($value !== '') {
+                $config->assignments()->create([
+                    'kind' => $kind,
+                    'value' => $value,
+                    'effective_from' => $data['effective_from'],
+                    'effective_to' => null,
+                ]);
+            }
+        }
 
         return back();
     }

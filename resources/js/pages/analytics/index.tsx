@@ -2,6 +2,7 @@ import { Head, router, usePage } from '@inertiajs/react';
 import { DownloadIcon, Loader2Icon, Share2Icon } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { index as analyticsIndex } from '@/actions/App/Http/Controllers/Analytics/AnalyticsController';
+import { storeDriverConfigAssignment } from '@/actions/App/Http/Controllers/Analytics/ConfigurationController';
 import { AddDriverConfigDialog } from '@/components/analytics/add-driver-config-dialog';
 import type {
     DialogContractType,
@@ -12,7 +13,11 @@ import { DispatcherRankings } from '@/components/analytics/dispatcher-rankings';
 import { KeyMetrics } from '@/components/analytics/key-metrics';
 import type { KeyMetricsData } from '@/components/analytics/key-metrics';
 import { PnlTable } from '@/components/analytics/pnl-table';
-import type { Expense, Row } from '@/components/analytics/pnl-table';
+import type {
+    AssignmentContext,
+    Expense,
+    Row,
+} from '@/components/analytics/pnl-table';
 import { BasisToggle } from '@/components/basis-toggle';
 import { DateRangePicker } from '@/components/date-range-picker';
 import { ShareDashboardModal } from '@/components/share-dashboard-modal';
@@ -47,6 +52,12 @@ type Props = {
     contractTypes: DialogContractType[];
     importedDrivers: DialogImportedDriver[];
     takenDriverKeys: string[];
+    /** Per-driver truck-assignment context for the inline attach control (TMS). */
+    assignmentContext: Record<number, AssignmentContext>;
+    /** Monday of the viewed period — effective_from for inline attaches. */
+    attachWeek: string;
+    /** Normalized units that carry payment/actuals data, for live validation. */
+    knownUnits: string[];
 };
 
 export default function AnalyticsDashboard({
@@ -66,6 +77,9 @@ export default function AnalyticsDashboard({
     contractTypes,
     importedDrivers,
     takenDriverKeys,
+    assignmentContext,
+    attachWeek,
+    knownUnits,
 }: Props) {
     const page = usePage();
     const slug = page.props.currentTeam?.slug ?? '';
@@ -82,6 +96,7 @@ export default function AnalyticsDashboard({
         external_driver_id?: string;
         external_driver_key?: string;
         driver_name?: string;
+        truck?: string;
     } | null>(null);
 
     const takenKeysSet = useMemo(
@@ -97,14 +112,70 @@ export default function AnalyticsDashboard({
                     : undefined,
             external_driver_key: row.external_driver_key ?? undefined,
             driver_name: row.driver_name,
+            // Seed the truck field with the row's (live TMS) truck so a brand-
+            // new config can be born with its unit already attached.
+            truck: row.truck_number ?? undefined,
         });
         setConfigureDialogOpen(true);
     }
 
     function handleConfigureSuccess() {
         // Reload the analytics rows so the newly-configured driver flips
-        // from amber "(no config)" to a normal row with salary/PL.
-        router.reload({ only: ['rows', 'keyMetrics', 'takenDriverKeys'] });
+        // from amber "(no config)" to a normal row with salary/PL, and the
+        // inline attach control gets its fresh assignment context.
+        router.reload({
+            only: ['rows', 'keyMetrics', 'takenDriverKeys', 'assignmentContext'],
+        });
+    }
+
+    // Inline "Attach" from the PnL truck column: write the truck (and optional
+    // trailer) as open-ended assignments from the viewed week, then refresh the
+    // rows so the actuals recompute. Writes are chained so both land before the
+    // single reload.
+    function handleAttachUnits(
+        configId: number,
+        values: { truck: string; trailer: string },
+    ) {
+        const writes = (
+            [
+                ['truck', values.truck],
+                ['trailer', values.trailer],
+            ] as const
+        )
+            .filter(([, value]) => value.trim() !== '')
+            .map(([kind, value]) => ({ kind, value: value.trim() }));
+
+        if (writes.length === 0) {
+            return;
+        }
+
+        const args: [string, number] = [slug, configId];
+
+        const post = (i: number) => {
+            if (i >= writes.length) {
+                router.reload({ only: ['rows', 'keyMetrics', 'assignmentContext'] });
+
+                return;
+            }
+
+            router[storeDriverConfigAssignment(args).method](
+                storeDriverConfigAssignment.url(args),
+                {
+                    kind: writes[i].kind,
+                    value: writes[i].value,
+                    effective_from: attachWeek,
+                    effective_to: null,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                } as any,
+                {
+                    preserveScroll: true,
+                    preserveState: true,
+                    onSuccess: () => post(i + 1),
+                },
+            );
+        };
+
+        post(0);
     }
 
     // Number of (whole) weeks in the window — used to normalise per-truck
@@ -231,6 +302,12 @@ export default function AnalyticsDashboard({
                         canDownload={canManage}
                         onConfigureDriver={
                             canManage ? handleConfigureDriver : undefined
+                        }
+                        assignmentContext={assignmentContext}
+                        attachWeek={attachWeek}
+                        knownUnits={knownUnits}
+                        onAttachUnits={
+                            canManage ? handleAttachUnits : undefined
                         }
                     />
                 </div>

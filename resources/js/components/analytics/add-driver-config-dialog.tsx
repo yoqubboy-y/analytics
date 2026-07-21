@@ -46,6 +46,8 @@ interface AddDriverConfigDialogProps {
         external_driver_id?: string;
         external_driver_key?: string;
         driver_name?: string;
+        /** Suggested starting truck (TMS teams) — seeds the Truck field. */
+        truck?: string;
     } | null;
     /** Where to send the user / refresh after a successful save. */
     onSuccess?: () => void;
@@ -72,6 +74,8 @@ export function AddDriverConfigDialog({
             contract_type: contractTypes[0]?.value ?? '',
             tariff_rate: '',
             effective_from: isoMonday(),
+            truck: '',
+            trailer: '',
         }),
         [contractTypes],
     );
@@ -85,6 +89,7 @@ export function AddDriverConfigDialog({
                 ...emptyState,
                 external_driver_id: prefill?.external_driver_id ?? '',
                 external_driver_key: prefill?.external_driver_key ?? '',
+                truck: prefill?.truck ?? '',
             });
         }
     }, [open, prefill, emptyState]);
@@ -113,6 +118,16 @@ export function AddDriverConfigDialog({
             payload.external_driver_key = form.external_driver_key;
         } else {
             payload.external_driver_id = parseInt(form.external_driver_id);
+
+            // TMS teams: optional starting units, attached from effective_from
+            // as open-ended assignments so actuals resolve immediately.
+            if (form.truck.trim()) {
+                payload.truck = form.truck.trim();
+            }
+
+            if (form.trailer.trim()) {
+                payload.trailer = form.trailer.trim();
+            }
         }
 
         router[storeDriverConfig(slug).method](
@@ -217,6 +232,49 @@ export function AddDriverConfigDialog({
                                 placeholder="e.g. Aidan Scott"
                             />
                         </div>
+
+                        {!isXlsx && (
+                            <div className="flex gap-4">
+                                <div className="flex flex-1 flex-col gap-1">
+                                    <Label htmlFor="adcd-truck">
+                                        Truck{' '}
+                                        <span className="text-xs font-normal text-muted-foreground">
+                                            (optional)
+                                        </span>
+                                    </Label>
+                                    <Input
+                                        id="adcd-truck"
+                                        value={form.truck}
+                                        onChange={(e) =>
+                                            setForm({
+                                                ...form,
+                                                truck: e.target.value,
+                                            })
+                                        }
+                                        placeholder="e.g. GL7005"
+                                    />
+                                </div>
+                                <div className="flex flex-1 flex-col gap-1">
+                                    <Label htmlFor="adcd-trailer">
+                                        Trailer{' '}
+                                        <span className="text-xs font-normal text-muted-foreground">
+                                            (optional)
+                                        </span>
+                                    </Label>
+                                    <Input
+                                        id="adcd-trailer"
+                                        value={form.trailer}
+                                        onChange={(e) =>
+                                            setForm({
+                                                ...form,
+                                                trailer: e.target.value,
+                                            })
+                                        }
+                                        placeholder="e.g. T6330"
+                                    />
+                                </div>
+                            </div>
+                        )}
 
                         <div className="flex gap-4">
                             <div className="flex flex-1 flex-col gap-1">

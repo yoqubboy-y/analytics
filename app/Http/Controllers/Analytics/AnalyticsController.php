@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Analytics;
 
+use App\Enums\DriverAssignmentKind;
 use App\Enums\DriverContractType;
 use App\Enums\ExpenseActualSource;
 use App\Enums\TeamDataSource;
@@ -12,7 +13,9 @@ use App\Models\Team;
 use App\Services\AnalyticsService;
 use App\Services\ExpenseActualsLookup;
 use Carbon\Carbon;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -84,6 +87,33 @@ class AnalyticsController extends Controller
             ->pluck('external_driver_key')
             ->all();
 
+        // Inline unit-attach affordance for the PnL truck column (TMS teams
+        // only — XLSX carries the truck in the driver key). Per configured
+        // driver: whether an assignment already covers the viewed week, the
+        // truck it had the prior week (for the "same as last week" one-click),
+        // and whether the suggested unit actually has payment/actuals data —
+        // the ledger match is text-only, so a typo silently resolves to $0.
+        $attachWeek = CarbonImmutable::parse($startDate->toDateString())->startOfWeek();
+        $isTms = $canManage && $currentTeam->data_source === TeamDataSource::AnalyticsDb;
+
+        // Units that actually carry money — the normalized set the actuals
+        // lookup matches against (equipment_payments ∪ expense_actuals). Both
+        // are small, fleet-wide, and not team-scoped, mirroring the lookup.
+        // Sent to the client so the attach popover can flag a typed unit that
+        // has no payment/actuals data before it silently resolves to $0.
+        $knownUnits = $isTms
+            ? collect(DB::table('equipment_payments')->distinct()->pluck('unit'))
+                ->merge(DB::table('expense_actuals')->distinct()->pluck('unit'))
+                ->map(fn ($u) => mb_strtoupper(trim((string) $u)))
+                ->filter()
+                ->unique()
+                ->values()
+            : collect();
+
+        $assignmentContext = $isTms
+            ? $this->assignmentContext($currentTeam, $rows, $attachWeek, $knownUnits->flip())
+            : [];
+
         return Inertia::render('analytics/index', [
             'rows' => $rows->values(),
             'dispatcherRows' => $dispatcherRows->values(),
@@ -120,7 +150,63 @@ class AnalyticsController extends Controller
             ], DriverContractType::cases()),
             'importedDrivers' => $importedDrivers,
             'takenDriverKeys' => $takenDriverKeys,
+            'assignmentContext' => $assignmentContext,
+            'attachWeek' => $attachWeek->toDateString(),
+            'knownUnits' => $knownUnits->all(),
         ]);
+    }
+
+    /**
+     * Per-driver truck-assignment context for the inline "Attach" control on
+     * the PnL truck column (TMS teams only). Keyed by `driver_id` (the external
+     * driver id used on the rows); missing-config rows are skipped (the
+     * "Configure" dialog creates the config with units instead).
+     *
+     * @param  \Illuminate\Support\Collection<int, array<string, mixed>>  $rows
+     * @param  \Illuminate\Support\Collection<string, int>  $knownUnits  normalized unit => index
+     * @return array<int, array<string, mixed>>
+     */
+    private function assignmentContext(Team $team, \Illuminate\Support\Collection $rows, CarbonImmutable $attachWeek, \Illuminate\Support\Collection $knownUnits): array
+    {
+        $norm = fn (?string $v) => $v === null || trim($v) === '' ? null : mb_strtoupper(trim($v));
+
+        $prevWeek = $attachWeek->subWeek();
+
+        /** @var \Illuminate\Support\Collection<int, \App\Models\DriverConfig> $configs */
+        $configs = $team->driverConfigs()->with('assignments')->get()->keyBy('external_driver_id');
+
+        $context = [];
+
+        foreach ($rows as $row) {
+            $driverId = $row['driver_id'] ?? null;
+
+            if (($row['is_total'] ?? false) || $driverId === null) {
+                continue;
+            }
+
+            // Missing-config rows have no config to attach to — the "Configure"
+            // dialog handles those (it can create the config with units inline).
+            $config = $configs->get($driverId);
+
+            if (! $config) {
+                continue;
+            }
+
+            $currentTruck = $config->assignmentAsOf(DriverAssignmentKind::Truck, $attachWeek);
+            $suggestedTruck = $row['truck_number'] ?? null;
+
+            $context[$driverId] = [
+                'config_id' => $config->id,
+                'covered' => $currentTruck !== null,
+                'current_truck' => $currentTruck,
+                'current_trailer' => $config->assignmentAsOf(DriverAssignmentKind::Trailer, $attachWeek),
+                'prev_truck' => $config->assignmentAsOf(DriverAssignmentKind::Truck, $prevWeek),
+                'suggested_truck' => $suggestedTruck,
+                'truck_has_actuals' => ($n = $norm($suggestedTruck)) !== null && isset($knownUnits[$n]),
+            ];
+        }
+
+        return $context;
     }
 
     /**

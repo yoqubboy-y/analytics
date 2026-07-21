@@ -12,9 +12,11 @@ import type {
 import {
     ArrowDownIcon,
     ArrowUpIcon,
+    CheckIcon,
     ChevronLeftIcon,
     ChevronRightIcon,
     ChevronsUpDownIcon,
+    CircleAlertIcon,
     DownloadIcon,
     EyeIcon,
     EyeOffIcon,
@@ -25,9 +27,12 @@ import {
     Settings2Icon,
     XIcon,
 } from 'lucide-react';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import * as XLSX from 'xlsx';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import MultipleSelector from '@/components/ui/multiselect';
 import type { Option } from '@/components/ui/multiselect';
 import {
@@ -102,6 +107,204 @@ export type Expense = {
     description?: string | null;
     calculation_type: string;
 };
+
+/**
+ * Per-driver truck-assignment state for the inline attach control (TMS teams).
+ * Supplied by the controller keyed by `driver_id`; absent for XLSX teams,
+ * viewers, and missing-config rows (those use the Configure dialog instead).
+ */
+export type AssignmentContext = {
+    config_id: number;
+    /** An assignment already covers the viewed week. */
+    covered: boolean;
+    current_truck: string | null;
+    current_trailer: string | null;
+    /** Truck in force the prior week — drives the "same as last week" one-click. */
+    prev_truck: string | null;
+    suggested_truck: string | null;
+    /** The suggested truck exists in the payment/actuals ledgers (text match). */
+    truck_has_actuals: boolean;
+};
+
+const normUnit = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+
+// Truck / trailer text field with a live "no payment data" warning — the
+// actuals join is text-only, so a unit that isn't in the ledger silently
+// resolves to $0. `known` is false only when a non-empty value has no match.
+function UnitField({
+    label,
+    value,
+    onChange,
+    known,
+    placeholder,
+    optional,
+}: {
+    label: string;
+    value: string;
+    onChange: (v: string) => void;
+    known: boolean;
+    placeholder: string;
+    optional?: boolean;
+}) {
+    return (
+        <div className="flex flex-col gap-1">
+            <Label className="text-xs">
+                {label}
+                {optional && (
+                    <span className="font-normal text-muted-foreground">
+                        {' '}
+                        (optional)
+                    </span>
+                )}
+            </Label>
+            <Input
+                className="h-8 tabular-nums"
+                value={value}
+                placeholder={placeholder}
+                onChange={(e) => onChange(e.target.value)}
+            />
+            {value.trim() !== '' && !known && (
+                <span className="flex items-center gap-1 text-[11px] text-amber-600">
+                    <CircleAlertIcon className="h-3 w-3 shrink-0" />
+                    No payment/actuals for this unit — resolves to $0.
+                </span>
+            )}
+        </div>
+    );
+}
+
+// Inline "Attach" control shown in the Truck column for TMS teams. Attaches a
+// truck (and optional trailer) as an open-ended assignment from the viewed
+// week, so the driver's actual truck/trailer payments, fuel and fleet start
+// resolving — without a trip to the Configuration page.
+function AttachUnitControl({
+    ctx,
+    attachWeek,
+    knownUnits,
+    onAttach,
+}: {
+    ctx: AssignmentContext;
+    attachWeek: string;
+    knownUnits: Set<string>;
+    onAttach: (
+        configId: number,
+        values: { truck: string; trailer: string },
+    ) => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const [truck, setTruck] = useState('');
+    const [trailer, setTrailer] = useState('');
+
+    // Re-seed from context each time the popover opens: prefer the assignment
+    // in force, else the week's suggested (live TMS) truck, else last week's.
+    useEffect(() => {
+        if (open) {
+            setTruck(
+                ctx.current_truck ??
+                    ctx.suggested_truck ??
+                    ctx.prev_truck ??
+                    '',
+            );
+            setTrailer(ctx.current_trailer ?? '');
+        }
+    }, [open, ctx]);
+
+    // The driver ran the same truck last week and it isn't attached yet — the
+    // common "just carry it forward" case gets a confident one-click button.
+    const sameAsPrev =
+        !ctx.covered &&
+        ctx.prev_truck != null &&
+        normUnit(ctx.prev_truck) !== '' &&
+        normUnit(ctx.prev_truck) === normUnit(ctx.suggested_truck);
+
+    const truckKnown = truck.trim() === '' || knownUnits.has(normUnit(truck));
+    const trailerKnown =
+        trailer.trim() === '' || knownUnits.has(normUnit(trailer));
+
+    const weekLabel = new Date(
+        attachWeek + 'T00:00:00',
+    ).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    });
+
+    function submit() {
+        onAttach(ctx.config_id, {
+            truck: truck.trim(),
+            trailer: trailer.trim(),
+        });
+        setOpen(false);
+    }
+
+    return (
+        <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+                <button
+                    type="button"
+                    title={
+                        ctx.covered
+                            ? 'Edit attached units'
+                            : 'Attach truck / trailer for this week'
+                    }
+                    className={cn(
+                        'inline-flex items-center gap-0.5 rounded border px-1 py-0.5 text-[10px] font-semibold transition-colors',
+                        ctx.covered
+                            ? 'border-transparent text-muted-foreground hover:bg-accent'
+                            : sameAsPrev
+                              ? 'border-primary/40 text-primary hover:bg-primary/10'
+                              : 'border-amber-500/40 text-amber-600 hover:bg-amber-500/10',
+                    )}
+                >
+                    {ctx.covered ? (
+                        <CheckIcon className="h-3 w-3" />
+                    ) : (
+                        <PlusIcon className="h-3 w-3" />
+                    )}
+                    {ctx.covered ? '' : sameAsPrev ? 'Attach (same)' : 'Attach'}
+                </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-72 p-3">
+                <div className="flex flex-col gap-3">
+                    <div>
+                        <p className="text-sm font-semibold">Attach units</p>
+                        <p className="text-xs text-muted-foreground">
+                            Effective from week of {weekLabel}, ongoing until
+                            changed.
+                        </p>
+                    </div>
+                    <UnitField
+                        label="Truck"
+                        value={truck}
+                        onChange={setTruck}
+                        known={truckKnown}
+                        placeholder="e.g. GL7005"
+                    />
+                    <UnitField
+                        label="Trailer"
+                        value={trailer}
+                        onChange={setTrailer}
+                        known={trailerKnown}
+                        placeholder="e.g. T6330"
+                        optional
+                    />
+                    <div className="flex justify-end">
+                        <Button
+                            size="sm"
+                            className="h-7"
+                            disabled={
+                                truck.trim() === '' && trailer.trim() === ''
+                            }
+                            onClick={submit}
+                        >
+                            Attach
+                        </Button>
+                    </div>
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
+}
 
 // Expense column header: shows the name, plus a hover tooltip with the
 // description when one is configured (dotted underline hints it's there).
@@ -247,6 +450,21 @@ interface PnlTableProps {
      * user stays on the analytics page. Omit to hide the button entirely.
      */
     onConfigureDriver?: (row: Row) => void;
+    /**
+     * Per-driver truck-assignment context, keyed by `driver_id` (TMS teams
+     * only). Drives the inline "Attach" control in the Truck column. Omit to
+     * hide it (XLSX teams, viewers, shared views).
+     */
+    assignmentContext?: Record<number, AssignmentContext>;
+    /** Monday of the viewed period — the effective_from for inline attaches. */
+    attachWeek?: string;
+    /** Normalized units that carry payment/actuals data, for live validation. */
+    knownUnits?: string[];
+    /** Posts the inline truck/trailer attach; omit to make the control read-only. */
+    onAttachUnits?: (
+        configId: number,
+        values: { truck: string; trailer: string },
+    ) => void;
 }
 
 export function PnlTable({
@@ -255,7 +473,15 @@ export function PnlTable({
     title,
     canDownload = true,
     onConfigureDriver,
+    assignmentContext,
+    attachWeek,
+    knownUnits,
+    onAttachUnits,
 }: PnlTableProps) {
+    const knownUnitsSet = useMemo(
+        () => new Set(knownUnits ?? []),
+        [knownUnits],
+    );
     const containerRef = useRef<HTMLDivElement>(null);
     const [driverFilter, setDriverFilter] = useState('');
     const [dispatcherFilter, setDispatcherFilter] = useState<Option[]>([]);
@@ -547,6 +773,27 @@ export function PnlTable({
         }
 
         if (colId === 'truck_number') {
+            const ctx =
+                row.driver_id != null
+                    ? assignmentContext?.[row.driver_id]
+                    : undefined;
+
+            if (ctx && attachWeek && onAttachUnits && !row.missing_config) {
+                return (
+                    <span className="flex items-center gap-1.5">
+                        <span className="truncate">
+                            {row.truck_number ?? '—'}
+                        </span>
+                        <AttachUnitControl
+                            ctx={ctx}
+                            attachWeek={attachWeek}
+                            knownUnits={knownUnitsSet}
+                            onAttach={onAttachUnits}
+                        />
+                    </span>
+                );
+            }
+
             return row.truck_number ?? '—';
         }
 
