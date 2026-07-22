@@ -18,8 +18,8 @@ type Props = {
     endDate: string;
     /** Which expense basis the figures were computed on. */
     basis: 'kpi' | 'actual';
-    /** Name of the Fleet Maintenance expense, or null; drives the fleet Key Metric. */
-    fleetExpenseName: string | null;
+    /** Expense columns summed into the Fleet Exp. Key Metric (basis-dependent). */
+    fleetExpenseNames: string[];
     keyMetrics: KeyMetricsData;
     /** Widget keys to show; null = the whole dashboard. */
     widgets: string[] | null;
@@ -33,7 +33,7 @@ export default function SharedDashboard({
     startDate,
     endDate,
     basis,
-    fleetExpenseName,
+    fleetExpenseNames,
     keyMetrics,
     widgets,
 }: Props) {
@@ -99,7 +99,7 @@ export default function SharedDashboard({
                                     rows={rows}
                                     metrics={keyMetrics}
                                     weeks={weeks}
-                                    fleetExpenseName={fleetExpenseName}
+                                    fleetExpenseNames={fleetExpenseNames}
                                 />
                             )}
                             {shows('dispatcher_chart') && (

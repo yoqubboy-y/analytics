@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\DriverAssignmentKind;
+use App\Enums\ExpenseActualSource;
 use App\Enums\ExpenseCalculationType;
 use App\Enums\TeamDataSource;
 use App\Models\DriverConfig;
@@ -22,6 +23,38 @@ class AnalyticsService
      * from the event breakdown.
      */
     private const PRODUCTIVE_EVENT_TITLES = ['TRANSIT', 'ENROUTE'];
+
+    /**
+     * Actual-basis expenses that roll up into the "Fleet Exp." card: the
+     * hand-attributed per-unit fleet cost plus the flat shared fleet cost.
+     * KPI uses the rate-based Fleet Maintenance instead (see fleetExpenseNames).
+     */
+    public const ACTUAL_FLEET_EXPENSE_NAMES = ['Fleet Expenditure', 'Shared Fleet Expenses'];
+
+    /**
+     * The expense-column names summed into the "Fleet Exp." metric for a basis.
+     * Actual: the hand-attributed + shared fleet expenses (Actual-only). KPI:
+     * the rate-based expense flagged `actual_source = Fleet`. Only names that
+     * actually exist on the team are returned, preserving the team's order.
+     *
+     * @return array<int, string>
+     */
+    public static function fleetExpenseNames(Team $team, string $basis): array
+    {
+        if ($basis === 'actual') {
+            return $team->expenses
+                ->pluck('name')
+                ->intersect(self::ACTUAL_FLEET_EXPENSE_NAMES)
+                ->values()
+                ->all();
+        }
+
+        return $team->expenses
+            ->filter(fn (TeamExpense $e) => $e->actual_source === ExpenseActualSource::Fleet)
+            ->pluck('name')
+            ->values()
+            ->all();
+    }
 
     /**
      * Get weekly P&L report rows for a team.

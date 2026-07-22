@@ -44,8 +44,8 @@ interface KeyMetricsProps {
     metrics: KeyMetricsData;
     /** Whole weeks in the window; per-truck averages are divided by this. */
     weeks: number;
-    /** Name of the Fleet Maintenance expense column, or null if the team has none. */
-    fleetExpenseName?: string | null;
+    /** Expense columns summed into the Fleet Exp. card (basis-dependent). */
+    fleetExpenseNames?: string[];
     /** Show the PNG download control (hidden for viewers). */
     canDownload?: boolean;
 }
@@ -54,7 +54,7 @@ export function KeyMetrics({
     rows,
     metrics,
     weeks,
-    fleetExpenseName,
+    fleetExpenseNames = [],
     canDownload = false,
 }: KeyMetricsProps) {
     const cardRef = useRef<HTMLDivElement>(null);
@@ -93,12 +93,15 @@ export function KeyMetrics({
     const margin = gross > 0 ? (net / gross) * 100 : 0;
     const netTone = net >= 0 ? 'text-emerald-500' : 'text-red-500';
 
-    // Fleet Maintenance total + its cent-per-mile. Both follow the active basis
-    // (rows are recomputed per basis); absent when the team has no fleet expense.
-    const fleetExpenses =
-        fleetExpenseName && totalRow
-            ? (totalRow.expenses[fleetExpenseName] ?? 0)
-            : 0;
+    // Fleet Exp. total + its cent-per-mile — the sum of the fleet expense
+    // columns for the active basis (Actual: Fleet Expenditure + Shared Fleet
+    // Expenses; KPI: Fleet Maintenance). Absent when the team has no fleet expense.
+    const fleetExpenses = totalRow
+        ? fleetExpenseNames.reduce(
+              (sum, name) => sum + (totalRow.expenses[name] ?? 0),
+              0,
+          )
+        : 0;
     const fleetCpm = miles > 0 ? fleetExpenses / miles : 0;
 
     const {
@@ -215,8 +218,8 @@ export function KeyMetrics({
                 </div>
             </div>
 
-            {/* Fleet Maintenance — total + cent-per-mile (follows the basis) */}
-            {fleetExpenseName && (
+            {/* Fleet Exp. — total + cent-per-mile (follows the basis) */}
+            {fleetExpenseNames.length > 0 && (
                 <div className="rounded-lg border bg-muted/30 px-3 py-2">
                     <div className="flex items-start justify-between gap-2">
                         <p className="text-sm font-medium">

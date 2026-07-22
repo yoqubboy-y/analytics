@@ -25,7 +25,7 @@ type TeamPayload = {
     dispatcherRows: Row[];
     keyMetrics: KeyMetricsData;
     expenses: Expense[];
-    fleetExpenseName: string | null;
+    fleetExpenseNames: string[];
     canManage: boolean;
 };
 
@@ -210,7 +210,7 @@ function TeamColumn({
                     rows={team.rows}
                     metrics={team.keyMetrics}
                     weeks={weeks}
-                    fleetExpenseName={team.fleetExpenseName}
+                    fleetExpenseNames={team.fleetExpenseNames}
                     canDownload={false}
                 />
                 <DispatcherChart

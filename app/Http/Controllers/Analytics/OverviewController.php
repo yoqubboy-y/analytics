@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Analytics;
 
-use App\Enums\ExpenseActualSource;
 use App\Enums\TeamDataSource;
 use App\Http\Controllers\Controller;
 use App\Models\Team;
@@ -145,12 +144,15 @@ class OverviewController extends Controller
         $configuredTrucks = $configured->count();
         $net = $configured->isEmpty() ? null : round((float) $configured->sum('profit_loss'), 2);
 
-        // Fleet Maintenance total + its cent-per-mile (basis-dependent). Null when
-        // the team has no fleet expense so the UI shows "—" rather than $0.
-        $fleetName = $team->expenses->first(fn ($e) => $e->actual_source === ExpenseActualSource::Fleet)?->name;
-        $fleetExpenses = $fleetName !== null
-            ? round((float) $rows->sum(fn ($r) => $r['expenses'][$fleetName] ?? 0.0), 2)
-            : null;
+        // Fleet Exp. total + its cent-per-mile (basis-dependent). Actual sums the
+        // hand-attributed + shared fleet expenses; KPI uses Fleet Maintenance.
+        // Null when the team has no fleet expense so the UI shows "—" not $0.
+        $fleetNames = AnalyticsService::fleetExpenseNames($team, $basis);
+        $fleetExpenses = $fleetNames === []
+            ? null
+            : round((float) $rows->sum(
+                fn ($r) => array_sum(array_map(fn ($n) => (float) ($r['expenses'][$n] ?? 0.0), $fleetNames))
+            ), 2);
         $fleetCpm = ($fleetExpenses !== null && $miles > 0) ? round($fleetExpenses / $miles, 4) : null;
 
         // XLSX teams are only as current as their last upload; analytics-DB

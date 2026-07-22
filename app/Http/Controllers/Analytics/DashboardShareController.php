@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Analytics;
 
-use App\Enums\ExpenseActualSource;
 use App\Http\Controllers\Controller;
 use App\Models\DashboardShare;
 use App\Models\Team;
@@ -124,8 +123,7 @@ class DashboardShareController extends Controller
             'startDate' => $startDate->toDateString(),
             'endDate' => $endDate->toDateString(),
             'basis' => $basis,
-            'fleetExpenseName' => $team->expenses
-                ->first(fn ($e) => $e->actual_source === ExpenseActualSource::Fleet)?->name,
+            'fleetExpenseNames' => AnalyticsService::fleetExpenseNames($team, $basis),
             'widgets' => $share->widgets,
         ]);
     }
