@@ -46,6 +46,11 @@ class AnalyticsService
         // Under actual basis, preload the real per-unit expense data once.
         $actuals = $basis === 'actual' ? ExpenseActualsLookup::forWindow($startDate, $endDate) : null;
 
+        // ...and the hand-entered attributions for any manual expenses.
+        $attributions = $basis === 'actual' && $expenses->contains(fn (TeamExpense $e) => $e->is_manual)
+            ? ManualAttributionLookup::forWindow($expenses->pluck('id')->all(), $startDate, $endDate)
+            : null;
+
         $rows = $this->fetchRawData($team, $startDate, $endDate);
 
         // Per-(driver, week) gross & miles, so salary and expenses can be summed
@@ -81,6 +86,7 @@ class AnalyticsService
             $activeWeeksByDriver[$row->driver_id] ?? [],
             $basis,
             $actuals,
+            $attributions,
         ));
 
         $totals = $this->computeTotals($driverRows, $expenses);
@@ -754,7 +760,7 @@ class AnalyticsService
      * @param  array<int, string>  $activeWeeks  week-start dates this driver was active
      * @return array<string, mixed>
      */
-    private function computeRow(object $row, Collection $driverConfigs, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks, array $activeWeeks, string $basis = 'kpi', ?ExpenseActualsLookup $actuals = null): array
+    private function computeRow(object $row, Collection $driverConfigs, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks, array $activeWeeks, string $basis = 'kpi', ?ExpenseActualsLookup $actuals = null, ?ManualAttributionLookup $attributions = null): array
     {
         $driverConfig = $driverConfigs->get($row->driver_id);
 
@@ -791,7 +797,7 @@ class AnalyticsService
         // analytics_db teams have no per-week truck history; the current truck
         // (from the TMS join) is the actual-mode fallback and is accurate for
         // the recent covered weeks.
-        $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks, $activeWeeks, $basis, $row->truck_number ?? null, $actuals);
+        $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks, $activeWeeks, $basis, $row->truck_number ?? null, $actuals, $attributions);
 
         $profitLoss = round($gross - $financials['salary'] - $financials['total_expenses'], 2);
 
@@ -847,7 +853,7 @@ class AnalyticsService
      * @param  array<int, string>  $activeWeeks  week-start dates this driver had any board
      * @return array{salary: float, expenses: array<string, float>, total_expenses: float}
      */
-    public function computeFinancials(DriverConfig $driverConfig, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks, array $activeWeeks, string $basis = 'kpi', ?string $fallbackTruck = null, ?ExpenseActualsLookup $actuals = null): array
+    public function computeFinancials(DriverConfig $driverConfig, Collection $expenses, Collection $weeklyBuckets, array $windowWeeks, array $activeWeeks, string $basis = 'kpi', ?string $fallbackTruck = null, ?ExpenseActualsLookup $actuals = null, ?ManualAttributionLookup $attributions = null): array
     {
         // Fast lookup for "was the driver active this week?" flat-expense gating.
         $activeWeekSet = array_flip($activeWeeks);
@@ -881,6 +887,36 @@ class AnalyticsService
         $totalCarrierCost = 0.0;
 
         foreach ($expenses as $expense) {
+            // Manual expenses (Actual basis) are attributed by hand, per driver
+            // per week — no contract-type gate, no rate, no unit match. Whoever
+            // has an attribution gets it, even in a zero-gross week. company-paid
+            // lands as a carrier cost; driver-paid renders negative and stays out
+            // of Total Exp., exactly like `isDriverPaidFor` for rated expenses.
+            if ($basis === 'actual' && $expense->is_manual && $attributions !== null) {
+                $companyAmount = 0.0;
+                $driverAmount = 0.0;
+                $charged = false;
+
+                foreach ($windowWeeks as $weekStart) {
+                    $sums = $attributions->amountFor($expense->id, $driverConfig->id, $weekStart);
+
+                    if ($sums === null) {
+                        continue;
+                    }
+
+                    $companyAmount += $sums['company'];
+                    $driverAmount += $sums['driver'];
+                    $charged = true;
+                }
+
+                if ($charged) {
+                    $computedExpenses[$expense->name] = round($companyAmount - $driverAmount, 2);
+                    $totalCarrierCost += $companyAmount;
+                }
+
+                continue;
+            }
+
             if (! $expense->appliesToContractType($contractType)) {
                 continue;
             }
@@ -1270,6 +1306,11 @@ class AnalyticsService
         // Under actual basis, preload the real per-unit expense data once.
         $actuals = $basis === 'actual' ? ExpenseActualsLookup::forWindow($startDate, $endDate) : null;
 
+        // ...and the hand-entered attributions for any manual expenses.
+        $attributions = $basis === 'actual' && $expenses->contains(fn (TeamExpense $e) => $e->is_manual)
+            ? ManualAttributionLookup::forWindow($expenses->pluck('id')->all(), $startDate, $endDate)
+            : null;
+
         $rows = $team->xlsxDriverDays()
             ->whereBetween('work_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->get();
@@ -1281,7 +1322,7 @@ class AnalyticsService
 
         $windowWeeks = $this->windowWeeks($startDate, $endDate);
 
-        $driverRows = $grouped->map(function (Collection $group, string $driverKey) use ($driverConfigs, $expenses, $windowWeeks, $basis, $actuals, $endDate) {
+        $driverRows = $grouped->map(function (Collection $group, string $driverKey) use ($driverConfigs, $expenses, $windowWeeks, $basis, $actuals, $attributions, $endDate) {
             $first = $group->first();
             $gross = (float) $group->sum('gross');
             $miles = (float) $group->sum('miles');
@@ -1359,7 +1400,7 @@ class AnalyticsService
 
             // XLSX identity is name+truck, so the group's truck is the per-week
             // fallback; a configured assignment history refines it per week.
-            $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks, $activeWeeks, $basis, $first->truck_number, $actuals);
+            $financials = $this->computeFinancials($driverConfig, $expenses, $weeklyBuckets, $windowWeeks, $activeWeeks, $basis, $first->truck_number, $actuals, $attributions);
             $profitLoss = round($gross - $financials['salary'] - $financials['total_expenses'], 2);
             $totalExpensesWithSalary = round($financials['total_expenses'] + $financials['salary'], 2);
 

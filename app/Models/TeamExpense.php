@@ -19,6 +19,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'description',
     'calculation_type',
     'actual_source',
+    'is_manual',
     'applies_to_actual',
     'applies_to_kpi',
     'applies_to',
@@ -41,6 +42,7 @@ class TeamExpense extends Model
         return [
             'calculation_type' => ExpenseCalculationType::class,
             'actual_source' => ExpenseActualSource::class,
+            'is_manual' => 'boolean', // Actual dollars come from hand-entered expense_attributions
             'applies_to_actual' => 'boolean', // included in the basis=actual P&L (curated per expense)
             'applies_to_kpi' => 'boolean', // included in the basis=kpi P&L (uncheck for an Actual-only expense)
             'applies_to' => 'array', // array<string> of DriverContractType values, or null for all
@@ -68,6 +70,16 @@ class TeamExpense extends Model
     public function rates(): HasMany
     {
         return $this->hasMany(TeamExpenseRate::class)->orderBy('effective_from');
+    }
+
+    /**
+     * Hand-entered per-driver, per-week attributions for a manual expense.
+     *
+     * @return HasMany<ExpenseAttribution, $this>
+     */
+    public function attributions(): HasMany
+    {
+        return $this->hasMany(ExpenseAttribution::class)->orderBy('week_start');
     }
 
     /**

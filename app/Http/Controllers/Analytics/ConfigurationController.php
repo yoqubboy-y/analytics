@@ -11,6 +11,7 @@ use App\Http\Controllers\Controller;
 use App\Models\DriverConfig;
 use App\Models\DriverConfigAssignment;
 use App\Models\DriverConfigRate;
+use App\Models\ExpenseAttribution;
 use App\Models\Team;
 use App\Models\TeamExpense;
 use App\Models\TeamExpenseRate;
@@ -98,7 +99,7 @@ class ConfigurationController extends Controller
                             'effective_to' => $a->effective_to?->toDateString(),
                         ])->all(),
                 ])->values(),
-            'expenses' => $currentTeam->expenses->load('rates')
+            'expenses' => $currentTeam->expenses->load('rates', 'attributions.driverConfig')
                 ->map(fn (TeamExpense $e) => [
                     'id' => $e->id,
                     'name' => $e->name,
@@ -108,6 +109,21 @@ class ConfigurationController extends Controller
                     // so the UI can show they always pull real dollars; applies_to_actual
                     // is the editable "include in the Actual P&L" toggle for the rest.
                     'actual_source' => $e->actual_source?->value,
+                    // Manual: Actual dollars come from hand-entered attributions
+                    // below, not the unit-matched ledger or the rate.
+                    'is_manual' => $e->is_manual,
+                    'attributions' => $e->attributions->sortByDesc('week_start')->values()
+                        ->map(fn (ExpenseAttribution $a) => [
+                            'id' => $a->id,
+                            'driver_config_id' => $a->driver_config_id,
+                            'driver_name' => $a->driverConfig
+                                ? $this->resolveDriverName($a->driverConfig, $driverNames)
+                                : '(removed driver)',
+                            'week_start' => $a->week_start->toDateString(),
+                            'amount' => $a->amount,
+                            'paid_by' => $a->paid_by,
+                            'note' => $a->note,
+                        ])->all(),
                     'applies_to_actual' => $e->applies_to_actual,
                     'applies_to_kpi' => $e->applies_to_kpi,
                     'current_rate' => $e->currentRate(),
@@ -339,6 +355,7 @@ class ConfigurationController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:500'],
             'calculation_type' => ['required', Rule::enum(ExpenseCalculationType::class)],
+            'is_manual' => ['boolean'],
             'applies_to_actual' => ['boolean'],
             'applies_to_kpi' => ['boolean'],
             'rate' => ['required', 'numeric', 'min:0'],
@@ -356,6 +373,7 @@ class ConfigurationController extends Controller
             'name' => $data['name'],
             'description' => $data['description'] ?? null,
             'calculation_type' => $data['calculation_type'],
+            'is_manual' => $data['is_manual'] ?? false,
             'applies_to_actual' => $data['applies_to_actual'] ?? true,
             'applies_to_kpi' => $data['applies_to_kpi'] ?? true,
             'applies_to' => $data['applies_to'] ?? null,
@@ -381,6 +399,7 @@ class ConfigurationController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:500'],
             'calculation_type' => ['required', Rule::enum(ExpenseCalculationType::class)],
+            'is_manual' => ['boolean'],
             'applies_to_actual' => ['boolean'],
             'applies_to_kpi' => ['boolean'],
             'applies_to' => ['nullable', 'array'],
@@ -466,6 +485,60 @@ class ConfigurationController extends Controller
         $teamExpenseRate->delete();
 
         return back();
+    }
+
+    public function storeExpenseAttribution(Request $request, Team $currentTeam, TeamExpense $teamExpense): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($teamExpense->team_id, $currentTeam);
+
+        $data = $this->validateAttribution($request, $currentTeam);
+
+        $teamExpense->attributions()->create($data);
+
+        return back();
+    }
+
+    public function updateExpenseAttribution(Request $request, Team $currentTeam, TeamExpense $teamExpense, ExpenseAttribution $expenseAttribution): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($teamExpense->team_id, $currentTeam);
+        $this->ensureRateBelongsToParent($expenseAttribution->team_expense_id, $teamExpense->id);
+
+        $data = $this->validateAttribution($request, $currentTeam);
+
+        $expenseAttribution->update($data);
+
+        return back();
+    }
+
+    public function destroyExpenseAttribution(Team $currentTeam, TeamExpense $teamExpense, ExpenseAttribution $expenseAttribution): RedirectResponse
+    {
+        $this->ensureBelongsToTeam($teamExpense->team_id, $currentTeam);
+        $this->ensureRateBelongsToParent($expenseAttribution->team_expense_id, $teamExpense->id);
+
+        $expenseAttribution->delete();
+
+        return back();
+    }
+
+    /**
+     * Validate a manual attribution payload. The driver config must belong to
+     * the current team; `paid_by` mirrors the driver-paid/company-paid split.
+     *
+     * @return array<string, mixed>
+     */
+    private function validateAttribution(Request $request, Team $currentTeam): array
+    {
+        return $request->validate([
+            'driver_config_id' => [
+                'required',
+                'integer',
+                Rule::exists('driver_configs', 'id')->where('team_id', $currentTeam->id),
+            ],
+            'week_start' => ['required', 'date'],
+            'amount' => ['required', 'numeric'],
+            'paid_by' => ['required', Rule::in(['company', 'driver'])],
+            'note' => ['nullable', 'string', 'max:500'],
+        ]);
     }
 
     /**

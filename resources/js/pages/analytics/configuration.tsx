@@ -5,17 +5,20 @@ import {
     destroyDriverConfigAssignment,
     destroyDriverConfigRate,
     destroyExpense,
+    destroyExpenseAttribution,
     destroyExpenseRate,
     index as configurationIndex,
     storeDriverConfig,
     storeDriverConfigAssignment,
     storeDriverConfigRate,
     storeExpense,
+    storeExpenseAttribution,
     storeExpenseRate,
     updateDriverConfig,
     updateDriverConfigAssignment,
     updateDriverConfigRate,
     updateExpense,
+    updateExpenseAttribution,
     updateExpenseRate,
 } from '@/actions/App/Http/Controllers/Analytics/ConfigurationController';
 import { AssignmentHistoryDialog } from '@/components/analytics/assignment-history-dialog';
@@ -23,6 +26,11 @@ import type {
     AssignmentKind,
     AssignmentRow,
 } from '@/components/analytics/assignment-history-dialog';
+import { ExpenseAttributionsDialog } from '@/components/analytics/expense-attributions-dialog';
+import type {
+    AttributionRow,
+    PaidBy,
+} from '@/components/analytics/expense-attributions-dialog';
 import { RateHistoryDialog } from '@/components/analytics/rate-history-dialog';
 import type { RateRow } from '@/components/analytics/rate-history-dialog';
 import { Button } from '@/components/ui/button';
@@ -113,6 +121,10 @@ type TeamExpense = {
     calculation_type: string;
     /** Set on the 5 file-backed expenses; they always show real dollars in Actual mode. Read-only. */
     actual_source: string | null;
+    /** Manual: Actual dollars come from hand-entered attributions, not the ledger or rate. */
+    is_manual: boolean;
+    /** Hand-entered per-driver, per-week attributions (newest week first). */
+    attributions: AttributionRow[];
     /** Whether this expense is included in the Actual P&L (editable per expense). */
     applies_to_actual: boolean;
     /** Whether this expense is included in the KPI P&L (uncheck for an Actual-only expense). */
@@ -264,10 +276,46 @@ function AppliesToKpiCheckbox({
     );
 }
 
+function ManualAttributionCheckbox({
+    checked,
+    onChange,
+}: {
+    checked: boolean;
+    onChange: (v: boolean) => void;
+}) {
+    const id = useId();
+
+    return (
+        <div className="relative flex w-full items-start gap-2 rounded-md border border-input p-3 shadow-xs outline-none has-data-[state=checked]:border-primary/50">
+            <div className="grid grow gap-1">
+                <Label htmlFor={id} className="cursor-pointer">
+                    Manual attribution
+                </Label>
+                <p
+                    className="text-xs text-muted-foreground"
+                    id={`${id}-description`}
+                >
+                    In Actual mode this expense's dollars come only from
+                    per-driver amounts you enter by hand (via "Attach") — no unit
+                    matching, no rate. Drivers with no attribution show $0.
+                </p>
+            </div>
+            <Checkbox
+                id={id}
+                aria-describedby={`${id}-description`}
+                className="order-1 after:absolute after:inset-0"
+                checked={checked}
+                onCheckedChange={(v) => onChange(v === true)}
+            />
+        </div>
+    );
+}
+
 const emptyExpense = {
     name: '',
     description: '',
     calculation_type: 'flat',
+    is_manual: false,
     applies_to_actual: true,
     applies_to_kpi: true,
     rate: '',
@@ -517,6 +565,7 @@ export default function Configuration({
                         : null,
                 skip_when_no_gross: editingExpense.skip_when_no_gross,
                 sort_order: editingExpense.sort_order,
+                is_manual: editingExpense.is_manual,
                 applies_to_actual: editingExpense.applies_to_actual,
                 applies_to_kpi: editingExpense.applies_to_kpi,
             },
@@ -552,6 +601,24 @@ export default function Configuration({
         assignTargetId != null
             ? (driverConfigs.find((dc) => dc.id === assignTargetId) ?? null)
             : null;
+
+    // --- Manual attribution ("Attach") dialog ---
+    const [attributionTargetId, setAttributionTargetId] = useState<
+        number | null
+    >(null);
+    const activeAttributionExpense =
+        attributionTargetId != null
+            ? (expenses.find((e) => e.id === attributionTargetId) ?? null)
+            : null;
+
+    // Driver picker options for the attributions dialog — all configs by name.
+    const attributionDrivers = useMemo(
+        () =>
+            driverConfigs
+                .map((dc) => ({ id: dc.id, name: dc.driver_name }))
+                .sort((a, b) => a.name.localeCompare(b.name)),
+        [driverConfigs],
+    );
 
     function addAssignment(
         driverId: number,
@@ -675,6 +742,63 @@ export default function Configuration({
     function deleteExpenseRate(expenseId: number, rateId: number) {
         router[destroyExpenseRate([slug, expenseId, rateId]).method](
             destroyExpenseRate.url([slug, expenseId, rateId]),
+            RATE_VISIT_OPTIONS,
+        );
+    }
+
+    function addExpenseAttribution(
+        expenseId: number,
+        driverConfigId: number,
+        weekStart: string,
+        amount: number,
+        paidBy: PaidBy,
+        note: string | null,
+    ) {
+        router[storeExpenseAttribution([slug, expenseId]).method](
+            storeExpenseAttribution.url([slug, expenseId]),
+            {
+                driver_config_id: driverConfigId,
+                week_start: weekStart,
+                amount,
+                paid_by: paidBy,
+                note,
+            },
+            RATE_VISIT_OPTIONS,
+        );
+    }
+
+    function updateExpenseAttributionValue(
+        expenseId: number,
+        attributionId: number,
+        driverConfigId: number,
+        weekStart: string,
+        amount: number,
+        paidBy: PaidBy,
+        note: string | null,
+    ) {
+        router[
+            updateExpenseAttribution([slug, expenseId, attributionId]).method
+        ](
+            updateExpenseAttribution.url([slug, expenseId, attributionId]),
+            {
+                driver_config_id: driverConfigId,
+                week_start: weekStart,
+                amount,
+                paid_by: paidBy,
+                note,
+            },
+            RATE_VISIT_OPTIONS,
+        );
+    }
+
+    function deleteExpenseAttribution(
+        expenseId: number,
+        attributionId: number,
+    ) {
+        router[
+            destroyExpenseAttribution([slug, expenseId, attributionId]).method
+        ](
+            destroyExpenseAttribution.url([slug, expenseId, attributionId]),
             RATE_VISIT_OPTIONS,
         );
     }
@@ -1568,6 +1692,19 @@ export default function Configuration({
                                                     }
                                                 />
                                             </div>
+                                            <div className="sm:col-span-2">
+                                                <ManualAttributionCheckbox
+                                                    checked={
+                                                        newExpense.is_manual
+                                                    }
+                                                    onChange={(v) =>
+                                                        setNewExpense({
+                                                            ...newExpense,
+                                                            is_manual: v,
+                                                        })
+                                                    }
+                                                />
+                                            </div>
                                         </div>
                                     </form>
                                     <DialogFooter>
@@ -1751,26 +1888,53 @@ export default function Configuration({
                                                                 Real $
                                                             </span>
                                                         ) : isEditing ? (
-                                                            <label className="flex cursor-pointer items-center gap-2 text-xs">
-                                                                <Checkbox
-                                                                    checked={
-                                                                        editingExpense.applies_to_actual
-                                                                    }
-                                                                    onCheckedChange={(
-                                                                        v,
-                                                                    ) =>
-                                                                        setEditingExpense(
-                                                                            {
-                                                                                ...editingExpense,
-                                                                                applies_to_actual:
-                                                                                    v ===
-                                                                                    true,
-                                                                            },
-                                                                        )
-                                                                    }
-                                                                />
-                                                                Included
-                                                            </label>
+                                                            <div className="flex flex-col gap-1.5">
+                                                                <label className="flex cursor-pointer items-center gap-2 text-xs">
+                                                                    <Checkbox
+                                                                        checked={
+                                                                            editingExpense.applies_to_actual
+                                                                        }
+                                                                        onCheckedChange={(
+                                                                            v,
+                                                                        ) =>
+                                                                            setEditingExpense(
+                                                                                {
+                                                                                    ...editingExpense,
+                                                                                    applies_to_actual:
+                                                                                        v ===
+                                                                                        true,
+                                                                                },
+                                                                            )
+                                                                        }
+                                                                    />
+                                                                    Included
+                                                                </label>
+                                                                <label className="flex cursor-pointer items-center gap-2 text-xs">
+                                                                    <Checkbox
+                                                                        checked={
+                                                                            editingExpense.is_manual
+                                                                        }
+                                                                        onCheckedChange={(
+                                                                            v,
+                                                                        ) =>
+                                                                            setEditingExpense(
+                                                                                {
+                                                                                    ...editingExpense,
+                                                                                    is_manual:
+                                                                                        v ===
+                                                                                        true,
+                                                                                },
+                                                                            )
+                                                                        }
+                                                                    />
+                                                                    Manual
+                                                                </label>
+                                                            </div>
+                                                        ) : exp.is_manual ? (
+                                                            // Manual: Actual dollars come from hand-entered attributions.
+                                                            <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                                                                Manual
+                                                            </span>
                                                         ) : exp.applies_to_actual ? (
                                                             <span className="text-xs font-medium">
                                                                 Included
@@ -2015,6 +2179,19 @@ export default function Configuration({
                                                             </div>
                                                         ) : (
                                                             <div className="flex justify-end gap-2">
+                                                                {exp.is_manual && (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        onClick={() =>
+                                                                            setAttributionTargetId(
+                                                                                exp.id,
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        Attach
+                                                                    </Button>
+                                                                )}
                                                                 <Button
                                                                     size="sm"
                                                                     variant="outline"
@@ -2192,6 +2369,45 @@ export default function Configuration({
                         )
                     }
                     onDelete={(id) => deleteExpenseRate(activeExpense.id, id)}
+                />
+            )}
+
+            {activeAttributionExpense && (
+                <ExpenseAttributionsDialog
+                    open
+                    onOpenChange={(open) =>
+                        !open && setAttributionTargetId(null)
+                    }
+                    title={`${activeAttributionExpense.name} — attributions`}
+                    drivers={attributionDrivers}
+                    attributions={activeAttributionExpense.attributions}
+                    onAdd={(driverId, week, amount, paidBy, note) =>
+                        addExpenseAttribution(
+                            activeAttributionExpense.id,
+                            driverId,
+                            week,
+                            amount,
+                            paidBy,
+                            note,
+                        )
+                    }
+                    onUpdate={(id, driverId, week, amount, paidBy, note) =>
+                        updateExpenseAttributionValue(
+                            activeAttributionExpense.id,
+                            id,
+                            driverId,
+                            week,
+                            amount,
+                            paidBy,
+                            note,
+                        )
+                    }
+                    onDelete={(id) =>
+                        deleteExpenseAttribution(
+                            activeAttributionExpense.id,
+                            id,
+                        )
+                    }
                 />
             )}
         </>

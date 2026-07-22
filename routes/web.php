@@ -64,6 +64,9 @@ Route::prefix('{current_team}')
             Route::post('configuration/expenses/{teamExpense}/rates', [ConfigurationController::class, 'storeExpenseRate'])->name('configuration.expenses.rates.store');
             Route::patch('configuration/expenses/{teamExpense}/rates/{teamExpenseRate}', [ConfigurationController::class, 'updateExpenseRate'])->name('configuration.expenses.rates.update');
             Route::delete('configuration/expenses/{teamExpense}/rates/{teamExpenseRate}', [ConfigurationController::class, 'destroyExpenseRate'])->name('configuration.expenses.rates.destroy');
+            Route::post('configuration/expenses/{teamExpense}/attributions', [ConfigurationController::class, 'storeExpenseAttribution'])->name('configuration.expenses.attributions.store');
+            Route::patch('configuration/expenses/{teamExpense}/attributions/{expenseAttribution}', [ConfigurationController::class, 'updateExpenseAttribution'])->name('configuration.expenses.attributions.update');
+            Route::delete('configuration/expenses/{teamExpense}/attributions/{expenseAttribution}', [ConfigurationController::class, 'destroyExpenseAttribution'])->name('configuration.expenses.attributions.destroy');
         });
 
         // XLSX import + data-source switch — Admin/Owner only (enforced in controller).

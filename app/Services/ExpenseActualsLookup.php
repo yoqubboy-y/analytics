@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\ExpenseActualSource;
 use App\Models\EquipmentPayment;
 use App\Models\ExpenseActual;
+use App\Models\ExpenseAttribution;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
@@ -163,28 +164,37 @@ class ExpenseActualsLookup
     }
 
     /**
-     * The window of ISO weeks that have any ledger coverage, for gating the
-     * "actual" toggle. Returns [minWeekStart, maxWeekStart] as date strings, or
-     * null when no actuals are loaded.
+     * The window of ISO weeks that have any actual coverage, for gating the
+     * "actual" toggle. Unions the per-unit ledger (`expense_actuals`) with the
+     * hand-entered manual attributions (`expense_attributions`) — otherwise a
+     * pure-manual week with no ledger rows would silently disable the toggle and
+     * hide the attributed dollars. Returns [minWeekStart, maxWeekStart] as date
+     * strings, or null when neither source has data.
      *
      * @return array{0: string, 1: string}|null
      */
     public static function coveredWeeks(): ?array
     {
-        /** @var Collection<int, ExpenseActual> $bounds */
-        $bounds = ExpenseActual::query()
-            ->selectRaw('MIN(week_start) AS min_week, MAX(week_start) AS max_week')
-            ->get();
+        /** @var Collection<int, string> $weeks */
+        $weeks = collect();
 
-        $row = $bounds->first();
+        foreach ([ExpenseActual::query(), ExpenseAttribution::query()] as $query) {
+            $bounds = $query
+                ->selectRaw('MIN(week_start) AS min_week, MAX(week_start) AS max_week')
+                ->first();
 
-        if (! $row || $row->min_week === null) {
+            if ($bounds && $bounds->min_week !== null) {
+                $weeks->push(CarbonImmutable::parse((string) $bounds->min_week)->toDateString());
+                $weeks->push(CarbonImmutable::parse((string) $bounds->max_week)->toDateString());
+            }
+        }
+
+        if ($weeks->isEmpty()) {
             return null;
         }
 
-        return [
-            (string) CarbonImmutable::parse((string) $row->min_week)->toDateString(),
-            (string) CarbonImmutable::parse((string) $row->max_week)->toDateString(),
-        ];
+        $sorted = $weeks->sort()->values();
+
+        return [(string) $sorted->first(), (string) $sorted->last()];
     }
 }

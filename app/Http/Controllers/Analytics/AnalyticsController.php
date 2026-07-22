@@ -9,12 +9,14 @@ use App\Enums\TeamDataSource;
 use App\Enums\TeamRole;
 use App\Http\Controllers\Controller;
 use App\Models\DashboardShare;
+use App\Models\DriverConfig;
 use App\Models\Team;
 use App\Services\AnalyticsService;
 use App\Services\ExpenseActualsLookup;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -124,7 +126,7 @@ class AnalyticsController extends Controller
             // KPI: everything except expenses marked Actual-only.
             'expenses' => $currentTeam->expenses
                 ->filter(fn ($e) => $basis === 'actual'
-                    ? ($e->actual_source !== null || $e->applies_to_actual)
+                    ? ($e->actual_source !== null || $e->is_manual || $e->applies_to_actual)
                     : $e->applies_to_kpi)
                 ->map(fn ($e) => [
                     'id' => $e->id,
@@ -162,17 +164,17 @@ class AnalyticsController extends Controller
      * driver id used on the rows); missing-config rows are skipped (the
      * "Configure" dialog creates the config with units instead).
      *
-     * @param  \Illuminate\Support\Collection<int, array<string, mixed>>  $rows
-     * @param  \Illuminate\Support\Collection<string, int>  $knownUnits  normalized unit => index
+     * @param  Collection<int, array<string, mixed>>  $rows
+     * @param  Collection<string, int>  $knownUnits  normalized unit => index
      * @return array<int, array<string, mixed>>
      */
-    private function assignmentContext(Team $team, \Illuminate\Support\Collection $rows, CarbonImmutable $attachWeek, \Illuminate\Support\Collection $knownUnits): array
+    private function assignmentContext(Team $team, Collection $rows, CarbonImmutable $attachWeek, Collection $knownUnits): array
     {
         $norm = fn (?string $v) => $v === null || trim($v) === '' ? null : mb_strtoupper(trim($v));
 
         $prevWeek = $attachWeek->subWeek();
 
-        /** @var \Illuminate\Support\Collection<int, \App\Models\DriverConfig> $configs */
+        /** @var Collection<int, DriverConfig> $configs */
         $configs = $team->driverConfigs()->with('assignments')->get()->keyBy('external_driver_id');
 
         $context = [];
