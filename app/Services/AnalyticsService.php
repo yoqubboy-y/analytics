@@ -921,15 +921,16 @@ class AnalyticsService
                 continue;
             }
 
-            // Each basis includes its own set of expenses. In Actual mode the
-            // P&L is the real ledger: the five actual-backed expenses always
-            // carry (their real dollars), and any other expense is included only
-            // when marked "applies to actual" (a factoring % or insurance that is
-            // a genuine cost). In KPI mode an expense is included unless it has
-            // been marked Actual-only (applies_to_kpi = false). Excluded expenses
-            // drop out of that basis' figure entirely.
+            // Each basis includes its own set of expenses. In Actual mode an
+            // expense is included when marked "Include in Actual" — this now
+            // governs the ledger-backed (Real $) expenses too, so a Fleet
+            // Maintenance can be hidden from Actual without being deleted.
+            // (Manual expenses are handled by the branch above and never reach
+            // here.) In KPI mode an expense is included unless it has been marked
+            // Actual-only (applies_to_kpi = false). Excluded expenses drop out of
+            // that basis' figure entirely.
             if ($basis === 'actual') {
-                if ($expense->actual_source === null && ! $expense->applies_to_actual) {
+                if (! $expense->applies_to_actual && ! $expense->is_manual) {
                     continue;
                 }
             } elseif (! $expense->applies_to_kpi) {

@@ -126,7 +126,7 @@ class AnalyticsController extends Controller
             // KPI: everything except expenses marked Actual-only.
             'expenses' => $currentTeam->expenses
                 ->filter(fn ($e) => $basis === 'actual'
-                    ? ($e->actual_source !== null || $e->is_manual || $e->applies_to_actual)
+                    ? ($e->is_manual || $e->applies_to_actual)
                     : $e->applies_to_kpi)
                 ->map(fn ($e) => [
                     'id' => $e->id,

@@ -1,10 +1,13 @@
 <?php
 
+use App\Enums\DriverAssignmentKind;
 use App\Enums\DriverContractType;
+use App\Enums\ExpenseActualSource;
 use App\Enums\ExpenseCalculationType;
 use App\Enums\TeamDataSource;
 use App\Enums\TeamRole;
 use App\Models\DriverConfig;
+use App\Models\ExpenseActual;
 use App\Models\ExpenseAttribution;
 use App\Models\Team;
 use App\Models\TeamExpense;
@@ -166,6 +169,64 @@ test('coveredWeeks unions manual attribution weeks with the ledger', function ()
     // A week with only manual attributions (no ledger) still counts as covered,
     // so the Actual toggle unlocks for it.
     expect(ExpenseActualsLookup::coveredWeeks())->toBe([MWK, MWK]);
+});
+
+// ---- Real $ visibility + manual override ----
+
+test('a Real $ expense can be hidden from Actual via applies_to_actual=false', function () {
+    $team = Team::factory()->create();
+    $config = DriverConfig::factory()->for($team)->create(['contract_type' => DriverContractType::CompanyCpm]);
+    $config->rates()->create(['tariff_rate' => 0.65, 'effective_from' => MWK]);
+    $config->assignments()->create(['kind' => DriverAssignmentKind::Truck, 'value' => 'GL7005', 'effective_from' => MWK]);
+    $config->load('rates', 'assignments');
+
+    // Fleet Maintenance is ledger-backed but the user unchecked "Included".
+    $expense = TeamExpense::factory()->for($team)->create([
+        'name' => 'Fleet Maintenance',
+        'calculation_type' => ExpenseCalculationType::PerMile,
+        'actual_source' => ExpenseActualSource::Fleet,
+        'applies_to_actual' => false,
+    ]);
+    $expense->rates()->create(['rate' => 0.20, 'effective_from' => MWK]);
+    ExpenseActual::create(['source' => 'fleet', 'unit' => 'GL7005', 'week_start' => MWK, 'amount' => 500]);
+
+    $expenses = collect([$expense->load('rates')]);
+    $ledger = ExpenseActualsLookup::forWindow(CarbonImmutable::parse(MWK), CarbonImmutable::parse(MWK));
+    $actual = app(AnalyticsService::class)->computeFinancials(
+        $config, $expenses, mBuckets(), [CarbonImmutable::parse(MWK)], [MWK], 'actual', 'GL7005', $ledger
+    );
+
+    expect($actual['expenses'])->not->toHaveKey('Fleet Maintenance')
+        ->and($actual['total_expenses'])->toBe(0.0);
+});
+
+test('the manual flag overrides the Real $ ledger for an actual_source expense', function () {
+    $team = Team::factory()->create();
+    $config = DriverConfig::factory()->for($team)->create(['contract_type' => DriverContractType::CompanyCpm]);
+    $config->rates()->create(['tariff_rate' => 0.65, 'effective_from' => MWK]);
+    $config->assignments()->create(['kind' => DriverAssignmentKind::Truck, 'value' => 'GL7005', 'effective_from' => MWK]);
+    $config->load('rates', 'assignments');
+
+    // Ledger-backed Fleet Maintenance, now flipped to manual.
+    $expense = TeamExpense::factory()->for($team)->create([
+        'name' => 'Fleet Maintenance',
+        'calculation_type' => ExpenseCalculationType::PerMile,
+        'actual_source' => ExpenseActualSource::Fleet,
+        'is_manual' => true,
+    ]);
+    $expense->rates()->create(['rate' => 0.20, 'effective_from' => MWK]);
+    ExpenseActual::create(['source' => 'fleet', 'unit' => 'GL7005', 'week_start' => MWK, 'amount' => 500]);
+    ExpenseAttribution::create(['team_expense_id' => $expense->id, 'driver_config_id' => $config->id, 'week_start' => MWK, 'amount' => 1200, 'paid_by' => 'company']);
+
+    $expenses = collect([$expense->load('rates')]);
+    $ledger = ExpenseActualsLookup::forWindow(CarbonImmutable::parse(MWK), CarbonImmutable::parse(MWK));
+    $manual = ManualAttributionLookup::forWindow([$expense->id], CarbonImmutable::parse(MWK), CarbonImmutable::parse(MWK));
+    $actual = app(AnalyticsService::class)->computeFinancials(
+        $config, $expenses, mBuckets(), [CarbonImmutable::parse(MWK)], [MWK], 'actual', 'GL7005', $ledger, $manual
+    );
+
+    // Manual attribution (1200) wins — not the 500 fleet ledger for GL7005.
+    expect($actual['expenses']['Fleet Maintenance'])->toBe(1200.0);
 });
 
 // ---- CRUD endpoints ----

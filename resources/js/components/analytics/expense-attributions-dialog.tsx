@@ -51,9 +51,50 @@ export interface AttributionRow {
     note: string | null;
 }
 
+export interface TruckAssignment {
+    value: string;
+    effective_from: string;
+    effective_to: string | null;
+}
+
 export interface DriverOption {
     id: number;
     name: string;
+    /** This driver's truck-assignment history, for resolving the unit per week. */
+    truckAssignments: TruckAssignment[];
+}
+
+/**
+ * The truck a driver ran in the given ISO week — the assignment whose
+ * [effective_from, effective_to] covers it, most recent effective_from winning
+ * (mirrors the backend `DriverConfig::assignmentAsOf`). ISO date strings sort
+ * lexically, so string comparison is safe here.
+ */
+function unitForWeek(assignments: TruckAssignment[], week: string): string | null {
+    const covering = assignments.filter(
+        (a) =>
+            a.effective_from <= week &&
+            (a.effective_to === null || a.effective_to >= week),
+    );
+
+    if (covering.length > 0) {
+        // Most recent effective_from wins when several cover the week.
+        covering.sort((a, b) => (a.effective_from < b.effective_from ? 1 : -1));
+
+        return covering[0].value;
+    }
+
+    if (assignments.length === 0) {
+        return null;
+    }
+
+    // A week before any assignment begins falls back to the earliest one, for
+    // continuity — same as the backend `assignmentAsOf`.
+    const earliest = [...assignments].sort((a, b) =>
+        a.effective_from < b.effective_from ? -1 : 1,
+    )[0];
+
+    return week < earliest.effective_from ? earliest.value : null;
 }
 
 interface ExpenseAttributionsDialogProps {
@@ -89,18 +130,27 @@ const fmtWeek = (eff: string) =>
 const fmtMoney = (n: number) =>
     n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
-/** Searchable driver picker (Popover + Command) — teams can carry 100+ configs. */
+/**
+ * Searchable driver picker (Popover + Command) — teams can carry 100+ configs.
+ * Matches on both the driver name and the truck/unit they ran in `week`, and
+ * shows that unit alongside each name so you can find a driver by their truck.
+ */
 function DriverCombobox({
     drivers,
     value,
+    week,
     onChange,
 }: {
     drivers: DriverOption[];
     value: number | null;
+    week: string;
     onChange: (id: number) => void;
 }) {
     const [open, setOpen] = useState(false);
     const selected = drivers.find((d) => d.id === value) ?? null;
+    const selectedUnit = selected
+        ? unitForWeek(selected.truckAssignments, week)
+        : null;
 
     return (
         <Popover open={open} onOpenChange={setOpen}>
@@ -113,37 +163,51 @@ function DriverCombobox({
                     className="h-9 w-56 justify-between font-normal"
                 >
                     <span className={cn('truncate', !selected && 'text-muted-foreground')}>
-                        {selected ? selected.name : 'Select driver…'}
+                        {selected
+                            ? selectedUnit
+                                ? `${selected.name} · ${selectedUnit}`
+                                : selected.name
+                            : 'Select driver or unit…'}
                     </span>
                     <ChevronsUpDownIcon className="h-4 w-4 shrink-0 opacity-50" />
                 </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-56 p-0" align="start">
+            <PopoverContent className="w-64 p-0" align="start">
                 <Command>
-                    <CommandInput placeholder="Search driver…" />
+                    <CommandInput placeholder="Search driver or unit…" />
                     <CommandList>
                         <CommandEmpty>No driver found.</CommandEmpty>
                         <CommandGroup>
-                            {drivers.map((d) => (
-                                <CommandItem
-                                    key={d.id}
-                                    value={d.name}
-                                    onSelect={() => {
-                                        onChange(d.id);
-                                        setOpen(false);
-                                    }}
-                                >
-                                    <CheckIcon
-                                        className={cn(
-                                            'mr-2 h-4 w-4',
-                                            d.id === value
-                                                ? 'opacity-100'
-                                                : 'opacity-0',
+                            {drivers.map((d) => {
+                                const unit = unitForWeek(d.truckAssignments, week);
+
+                                return (
+                                    <CommandItem
+                                        key={d.id}
+                                        value={d.name}
+                                        keywords={unit ? [unit] : undefined}
+                                        onSelect={() => {
+                                            onChange(d.id);
+                                            setOpen(false);
+                                        }}
+                                    >
+                                        <CheckIcon
+                                            className={cn(
+                                                'mr-2 h-4 w-4',
+                                                d.id === value
+                                                    ? 'opacity-100'
+                                                    : 'opacity-0',
+                                            )}
+                                        />
+                                        <span className="truncate">{d.name}</span>
+                                        {unit && (
+                                            <span className="ml-auto pl-2 text-xs text-muted-foreground">
+                                                {unit}
+                                            </span>
                                         )}
-                                    />
-                                    <span className="truncate">{d.name}</span>
-                                </CommandItem>
-                            ))}
+                                    </CommandItem>
+                                );
+                            })}
                         </CommandGroup>
                     </CommandList>
                 </Command>
@@ -277,6 +341,7 @@ export function ExpenseAttributionsDialog({
                                                     <DriverCombobox
                                                         drivers={drivers}
                                                         value={editDriver}
+                                                        week={editWeek}
                                                         onChange={setEditDriver}
                                                     />
                                                 ) : (
@@ -421,6 +486,7 @@ export function ExpenseAttributionsDialog({
                         <DriverCombobox
                             drivers={drivers}
                             value={newDriver}
+                            week={newWeek}
                             onChange={setNewDriver}
                         />
                     </div>

@@ -611,11 +611,23 @@ export default function Configuration({
             ? (expenses.find((e) => e.id === attributionTargetId) ?? null)
             : null;
 
-    // Driver picker options for the attributions dialog — all configs by name.
+    // Driver picker options for the attributions dialog — configs by name, each
+    // carrying its truck-assignment history so the picker can show/search the
+    // unit that driver ran in the attributed week.
     const attributionDrivers = useMemo(
         () =>
             driverConfigs
-                .map((dc) => ({ id: dc.id, name: dc.driver_name }))
+                .map((dc) => ({
+                    id: dc.id,
+                    name: dc.driver_name,
+                    truckAssignments: dc.assignments
+                        .filter((a) => a.kind === 'truck')
+                        .map((a) => ({
+                            value: a.value,
+                            effective_from: a.effective_from,
+                            effective_to: a.effective_to,
+                        })),
+                }))
                 .sort((a, b) => a.name.localeCompare(b.name)),
         [driverConfigs],
     );
@@ -1882,13 +1894,15 @@ export default function Configuration({
                                                         )}
                                                     </TableCell>
                                                     <TableCell>
-                                                        {exp.actual_source ? (
-                                                            // The 5 file-backed expenses are always in Actual mode, at real dollars.
-                                                            <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                                                                Real $
-                                                            </span>
-                                                        ) : isEditing ? (
+                                                        {isEditing ? (
                                                             <div className="flex flex-col gap-1.5">
+                                                                {exp.actual_source && (
+                                                                    // Ledger-backed: the badge stays as a hint, but the
+                                                                    // checkboxes below now govern whether/how it shows.
+                                                                    <span className="inline-flex w-fit items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                                                                        Real $
+                                                                    </span>
+                                                                )}
                                                                 <label className="flex cursor-pointer items-center gap-2 text-xs">
                                                                     <Checkbox
                                                                         checked={
@@ -1935,6 +1949,21 @@ export default function Configuration({
                                                             <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                                                                 Manual
                                                             </span>
+                                                        ) : exp.actual_source ? (
+                                                            exp.applies_to_actual ? (
+                                                                // Ledger-backed and shown in Actual.
+                                                                <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                                                                    Real $
+                                                                </span>
+                                                            ) : (
+                                                                // Kept, but hidden from the Actual P&L.
+                                                                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                                                    <span className="line-through">
+                                                                        Real $
+                                                                    </span>
+                                                                    hidden
+                                                                </span>
+                                                            )
                                                         ) : exp.applies_to_actual ? (
                                                             <span className="text-xs font-medium">
                                                                 Included

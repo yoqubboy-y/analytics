@@ -113,7 +113,7 @@ class DashboardShareController extends Controller
             // Only the columns belonging to this basis, matching the computed rows.
             'expenses' => $team->expenses
                 ->filter(fn ($e) => $basis === 'actual'
-                    ? ($e->actual_source !== null || $e->applies_to_actual)
+                    ? ($e->is_manual || $e->applies_to_actual)
                     : $e->applies_to_kpi)
                 ->map(fn ($e) => [
                     'id' => $e->id,
