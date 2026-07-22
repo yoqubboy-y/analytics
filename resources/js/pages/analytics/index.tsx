@@ -129,9 +129,10 @@ export default function AnalyticsDashboard({
     }
 
     // Inline "Attach" from the PnL truck column: write the truck (and optional
-    // trailer) as open-ended assignments from the viewed week, then refresh the
-    // rows so the actuals recompute. Writes are chained so both land before the
-    // single reload.
+    // trailer) as assignments scoped to the VIEWED PERIOD only (effective_from =
+    // that week, effective_to = the range end) — a suggested unit shouldn't run
+    // on forever, only for the period it was suggested for. Then refresh the rows
+    // so the actuals recompute. Writes are chained so both land before the reload.
     function handleAttachUnits(
         configId: number,
         values: { truck: string; trailer: string },
@@ -164,7 +165,7 @@ export default function AnalyticsDashboard({
                     kind: writes[i].kind,
                     value: writes[i].value,
                     effective_from: attachWeek,
-                    effective_to: null,
+                    effective_to: endDate,
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 } as any,
                 {
