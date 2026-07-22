@@ -891,10 +891,13 @@ class AnalyticsService
             // per week — no contract-type gate, no rate, no unit match. Whoever
             // has an attribution gets it, even in a zero-gross week. company-paid
             // lands as a carrier cost; driver-paid renders negative and stays out
-            // of Total Exp., exactly like `isDriverPaidFor` for rated expenses.
+            // of Total Exp., exactly like `isDriverPaidFor` for rated expenses;
+            // "none" (Unbilled) shows as a number but is billed to no party, so
+            // it feeds the displayed cell without touching Total Exp. / P&L.
             if ($basis === 'actual' && $expense->is_manual && $attributions !== null) {
                 $companyAmount = 0.0;
                 $driverAmount = 0.0;
+                $neutralAmount = 0.0;
                 $charged = false;
 
                 foreach ($windowWeeks as $weekStart) {
@@ -906,11 +909,15 @@ class AnalyticsService
 
                     $companyAmount += $sums['company'];
                     $driverAmount += $sums['driver'];
+                    $neutralAmount += $sums['none'];
                     $charged = true;
                 }
 
                 if ($charged) {
-                    $computedExpenses[$expense->name] = round($companyAmount - $driverAmount, 2);
+                    // Only the company portion is a real carrier cost. The
+                    // displayed cell also carries the Unbilled number (positive)
+                    // and nets the driver-paid credit — but P&L sees company only.
+                    $computedExpenses[$expense->name] = round($companyAmount - $driverAmount + $neutralAmount, 2);
                     $totalCarrierCost += $companyAmount;
                 }
 

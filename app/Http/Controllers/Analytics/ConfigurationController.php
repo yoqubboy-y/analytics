@@ -536,7 +536,7 @@ class ConfigurationController extends Controller
             ],
             'week_start' => ['required', 'date'],
             'amount' => ['required', 'numeric'],
-            'paid_by' => ['required', Rule::in(['company', 'driver'])],
+            'paid_by' => ['required', Rule::in(['company', 'driver', 'none'])],
             'note' => ['nullable', 'string', 'max:500'],
         ]);
     }

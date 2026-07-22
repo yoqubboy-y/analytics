@@ -71,7 +71,7 @@ test('the lookup splits company and driver sums per expense/config/week', functi
     $lookup = ManualAttributionLookup::forWindow([$expense->id], CarbonImmutable::parse(MWK), CarbonImmutable::parse(MWK));
     $sums = $lookup->amountFor($expense->id, $config->id, CarbonImmutable::parse(MWK));
 
-    expect($sums)->toBe(['company' => 1500.0, 'driver' => 200.0])
+    expect($sums)->toBe(['company' => 1500.0, 'driver' => 200.0, 'none' => 0.0])
         ->and($lookup->amountFor($expense->id, $config->id, CarbonImmutable::parse('2026-07-20')))->toBeNull();
 });
 
@@ -95,6 +95,31 @@ test('driver-paid attribution renders negative and stays out of total_expenses',
 
     expect($actual['expenses']['Fleet Maintenance'])->toBe(-800.0)
         ->and($actual['total_expenses'])->toBe(0.0);
+});
+
+test('an Unbilled attribution shows as a number but never touches Total Exp.', function () {
+    [$config, $expenses, $expense] = manualFixture();
+    ExpenseAttribution::create(['team_expense_id' => $expense->id, 'driver_config_id' => $config->id, 'week_start' => MWK, 'amount' => 150, 'paid_by' => 'none']);
+
+    $actual = manualActual($config, $expenses, $expense, mBuckets());
+
+    // The cell carries the number (info), but P&L (total_expenses) is untouched.
+    expect($actual['expenses']['Fleet Maintenance'])->toBe(150.0)
+        ->and($actual['total_expenses'])->toBe(0.0);
+});
+
+test('company, driver and Unbilled combine correctly in one cell', function () {
+    [$config, $expenses, $expense] = manualFixture();
+    ExpenseAttribution::create(['team_expense_id' => $expense->id, 'driver_config_id' => $config->id, 'week_start' => MWK, 'amount' => 1000, 'paid_by' => 'company']);
+    ExpenseAttribution::create(['team_expense_id' => $expense->id, 'driver_config_id' => $config->id, 'week_start' => MWK, 'amount' => 300, 'paid_by' => 'driver']);
+    ExpenseAttribution::create(['team_expense_id' => $expense->id, 'driver_config_id' => $config->id, 'week_start' => MWK, 'amount' => 150, 'paid_by' => 'none']);
+
+    $actual = manualActual($config, $expenses, $expense, mBuckets());
+
+    // Cell = 1000 (company) − 300 (driver) + 150 (unbilled) = 850.
+    // Total Exp. = only the 1000 company portion.
+    expect($actual['expenses']['Fleet Maintenance'])->toBe(850.0)
+        ->and($actual['total_expenses'])->toBe(1000.0);
 });
 
 test('a driver with no attribution gets no manual cell and $0 cost', function () {

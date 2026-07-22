@@ -39,7 +39,7 @@ import {
 import { WeekPicker, isoMonday } from '@/components/week-picker';
 import { cn } from '@/lib/utils';
 
-export type PaidBy = 'company' | 'driver';
+export type PaidBy = 'company' | 'driver' | 'none';
 
 export interface AttributionRow {
     id: number;
@@ -240,17 +240,23 @@ export function ExpenseAttributionsDialog({
     const [editPaidBy, setEditPaidBy] = useState<PaidBy>('company');
     const [editNote, setEditNote] = useState('');
 
-    // Net across the listed attributions: company-paid is carrier cost,
-    // driver-paid nets out (a pass-through the driver covers).
-    const net = useMemo(
-        () =>
-            attributions.reduce(
-                (sum, a) =>
-                    sum + (a.paid_by === 'driver' ? -a.amount : a.amount),
-                0,
-            ),
-        [attributions],
-    );
+    // P&L-relevant net across the listed attributions: company-paid is carrier
+    // cost, driver-paid nets out (a pass-through). Unbilled ('none') is excluded
+    // entirely — it never touches P&L — but summed separately for reference.
+    const { net, unbilled } = useMemo(() => {
+        let net = 0;
+        let unbilled = 0;
+
+        for (const a of attributions) {
+            if (a.paid_by === 'none') {
+                unbilled += a.amount;
+            } else {
+                net += a.paid_by === 'driver' ? -a.amount : a.amount;
+            }
+        }
+
+        return { net, unbilled };
+    }, [attributions]);
 
     function submitNew(e: React.FormEvent) {
         e.preventDefault();
@@ -302,7 +308,7 @@ export function ExpenseAttributionsDialog({
                     <DialogTitle>{title}</DialogTitle>
                     <DialogDescription>
                         {subtitle ??
-                            'Attribute this expense to a driver for one ISO week. Company-paid counts as a real carrier cost; driver-paid is a pass-through the driver covers (shown as a credit, kept out of Total Exp.). Actual-mode reports sum these per driver, per week.'}
+                            'Attribute this expense to a driver for one ISO week. Company-paid counts as a real carrier cost; driver-paid is a pass-through the driver covers (shown as a credit, kept out of Total Exp.); Unbilled shows as a number but is billed to no party, so it never affects P&L. Actual-mode reports sum these per driver, per week.'}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -377,7 +383,15 @@ export function ExpenseAttributionsDialog({
                                                         }
                                                     />
                                                 ) : (
-                                                    fmtMoney(a.amount)
+                                                    <span
+                                                        className={cn(
+                                                            a.paid_by ===
+                                                                'none' &&
+                                                                'text-muted-foreground italic',
+                                                        )}
+                                                    >
+                                                        {fmtMoney(a.amount)}
+                                                    </span>
                                                 )}
                                             </TableCell>
                                             <TableCell>
@@ -467,12 +481,20 @@ export function ExpenseAttributionsDialog({
                 </div>
 
                 {attributions.length > 0 && (
-                    <div className="flex justify-end gap-2 text-sm">
+                    <div className="flex flex-wrap justify-end gap-x-4 gap-y-1 text-sm">
+                        {unbilled !== 0 && (
+                            <span className="text-muted-foreground">
+                                Unbilled (info, not in P&L):{' '}
+                                <span className="tabular-nums">
+                                    {fmtMoney(unbilled)}
+                                </span>
+                            </span>
+                        )}
                         <span className="text-muted-foreground">
-                            Net (company − driver):
-                        </span>
-                        <span className="font-medium tabular-nums">
-                            {fmtMoney(net)}
+                            Net P&L (company − driver):{' '}
+                            <span className="font-medium tabular-nums text-foreground">
+                                {fmtMoney(net)}
+                            </span>
                         </span>
                     </div>
                 )}
@@ -545,17 +567,32 @@ function PaidBySelect({
             <SelectContent>
                 <SelectItem value="company">Company</SelectItem>
                 <SelectItem value="driver">Driver</SelectItem>
+                <SelectItem value="none">Unbilled</SelectItem>
             </SelectContent>
         </Select>
     );
 }
 
 function PaidByBadge({ value }: { value: PaidBy }) {
-    return value === 'driver' ? (
-        <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-            Driver
-        </span>
-    ) : (
+    if (value === 'driver') {
+        return (
+            <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+                Driver
+            </span>
+        );
+    }
+
+    if (value === 'none') {
+        // Unbilled: informational, billed to no party — muted so it reads as
+        // "not a cost" and doesn't touch P&L.
+        return (
+            <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                Unbilled
+            </span>
+        );
+    }
+
+    return (
         <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
             Company
         </span>

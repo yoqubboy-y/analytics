@@ -13,13 +13,15 @@ use Carbon\CarbonInterface;
  *
  * Each bucket splits by who pays: `company` sums land as carrier cost;
  * `driver` sums are pass-throughs the driver covers (rendered negative,
- * excluded from Total Exp.) — mirroring `TeamExpense::isDriverPaidFor`.
+ * excluded from Total Exp.) — mirroring `TeamExpense::isDriverPaidFor`; `none`
+ * (Unbilled) sums are informational — shown as a number but billed to no party,
+ * so they touch neither Total Exp. nor the driver's settlement.
  */
 class ManualAttributionLookup
 {
     /**
-     * @param  array<int, array<int, array<string, array{company: float, driver: float}>>>  $index
-     *                                                                                              [expenseId][configId][weekStart] => ['company' => float, 'driver' => float]
+     * @param  array<int, array<int, array<string, array{company: float, driver: float, none: float}>>>  $index
+     *                                                                                                           [expenseId][configId][weekStart] => ['company' => float, 'driver' => float, 'none' => float]
      */
     private function __construct(private array $index) {}
 
@@ -53,10 +55,14 @@ class ManualAttributionLookup
             $week = CarbonImmutable::parse((string) $row->week_start)->toDateString();
 
             if (! isset($index[$expenseId][$configId][$week])) {
-                $index[$expenseId][$configId][$week] = ['company' => 0.0, 'driver' => 0.0];
+                $index[$expenseId][$configId][$week] = ['company' => 0.0, 'driver' => 0.0, 'none' => 0.0];
             }
 
-            $bucket = $row->paid_by === 'driver' ? 'driver' : 'company';
+            $bucket = match ($row->paid_by) {
+                'driver' => 'driver',
+                'none' => 'none',
+                default => 'company',
+            };
             $index[$expenseId][$configId][$week][$bucket] += (float) $row->total;
         }
 
@@ -64,10 +70,10 @@ class ManualAttributionLookup
     }
 
     /**
-     * The company/driver-paid split for one expense, driver config and week —
+     * The company/driver/none split for one expense, driver config and week —
      * null when nothing was attributed (so the caller can skip the week).
      *
-     * @return array{company: float, driver: float}|null
+     * @return array{company: float, driver: float, none: float}|null
      */
     public function amountFor(int $expenseId, int $configId, CarbonImmutable $week): ?array
     {
